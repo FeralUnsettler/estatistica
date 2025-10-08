@@ -31,12 +31,12 @@ def create_pdf_report(df, variavel, stats_dict, infer_results, image_bytes_dict,
     def safe_text(txt):
         txt = str(txt)
         # substitui travessões por hífens simples
-        txt = txt.replace("—", "-").replace("–", "-")
+        txt = txt.replace("—", "|").replace("–", "|")
         return txt
 
     # Cabeçalho
     pdf.set_font("DejaVu" if unicode_enabled else "Arial", "B", 14)
-    pdf.cell(0, 10, safe_text("Relatório de Análise - Plataforma AfirmAção"), ln=True, align="C")
+    pdf.cell(0, 10, safe_text("Relatorio de Análise - Plataforma AfirmAção"), ln=True, align="C")
     pdf.ln(4)
 
     pdf.set_font("DejaVu" if unicode_enabled else "Arial", size=11)
