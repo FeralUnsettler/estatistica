@@ -4,27 +4,21 @@ Geração de PDF final com texto e imagens (utiliza FPDF).
 create_pdf_report(df, variavel, stats, infer_results, image_bytes_dict, n) -> bytes
 """
 
-import tempfile
-import os
 from fpdf import FPDF
 from io import BytesIO
 
 def create_pdf_report(df, variavel, stats_dict, infer_results, image_bytes_dict, n):
     """
-    - df: DataFrame (used for metadata)
-    - variavel: variável analisada (string)
-    - stats_dict: dict com estatísticas descritivas
-    - infer_results: dict com resultados dos testes inferenciais
-    - image_bytes_dict: dict {title: png_bytes}
-    - n: int, tamanho da amostra
-    Retorna: bytes do PDF
+    Gera relatório PDF da análise estatística com suporte a UTF-8 (fpdf2).
     """
-    pdf = FPDF(orientation='P', unit='mm', format='A4')
+
+    pdf = FPDF(orientation="P", unit="mm", format="A4")
     pdf.set_auto_page_break(auto=True, margin=15)
     pdf.add_page()
     pdf.set_font("Arial", "B", 14)
     pdf.cell(0, 10, "Relatório de Análise - Plataforma AfirmAção", ln=True, align="C")
     pdf.ln(4)
+
     pdf.set_font("Arial", size=11)
     pdf.multi_cell(0, 6, f"Base sintética gerada — n = {n} observações")
     pdf.ln(2)
@@ -41,38 +35,23 @@ def create_pdf_report(df, variavel, stats_dict, infer_results, image_bytes_dict,
     pdf.set_font("Arial", "B", 12)
     pdf.cell(0, 6, "Resultados Inferenciais", ln=True)
     pdf.set_font("Arial", size=10)
-    # Pretty print infer_results
     for test_name, res in infer_results.items():
         pdf.multi_cell(0, 5, f"{test_name}: {res}")
     pdf.ln(4)
 
-    # Insert images: write bytes to temp files and insert
-    tmpdir = tempfile.mkdtemp()
-    try:
-        for title, img_bytes in image_bytes_dict.items():
-            img_path = os.path.join(tmpdir, f"{title[:30].replace(' ','_')}.png")
-            with open(img_path, "wb") as f:
-                f.write(img_bytes)
-            pdf.add_page()
-            pdf.set_font("Arial", "B", 12)
-            pdf.cell(0, 6, title, ln=True)
-            pdf.ln(4)
-            # Calculate width maintain aspect: we'll use w=180mm max
-            pdf.image(img_path, w=180)
-    finally:
-        # cleanup temp files
-        for fname in os.listdir(tmpdir):
-            try:
-                os.remove(os.path.join(tmpdir, fname))
-            except Exception:
-                pass
-        try:
-            os.rmdir(tmpdir)
-        except Exception:
-            pass
+    # Inserção de imagens geradas
+    for img_name, img_bytes in image_bytes_dict.items():
+        pdf.add_page()
+        pdf.set_font("Arial", "B", 12)
+        pdf.cell(0, 8, img_name, ln=True)
+        img_stream = BytesIO(img_bytes)
+        pdf.image(img_stream, x=15, y=None, w=170)
+        pdf.ln(10)
 
+    # Exporta para bytes
     out = BytesIO()
-    pdf.output(out)
+    pdf_bytes = pdf.output(dest="S").encode("latin-1", "replace")
+    out.write(pdf_bytes)
     out.seek(0)
     return out.read()
 

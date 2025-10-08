@@ -4,6 +4,7 @@ numpy
 scipy
 matplotlib
 fpdf
+fpdf2
 plotly
 seaborn
 kaleido
