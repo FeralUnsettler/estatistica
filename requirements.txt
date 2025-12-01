@@ -1,0 +1,19 @@
+streamlit
+pandas
+numpy
+plotly
+folium
+streamlit-folium
+geopy
+requests
+
+# IA – busca semântica
+sentence-transformers
+faiss-cpu
+
+# Exportação PDF e PowerPoint
+reportlab
+python-pptx
+
+openpyxl
+python-dotenv
