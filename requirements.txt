@@ -3,5 +3,5 @@ pandas
 matplotlib
 wordcloud
 google-generativeai
-streamlit-authenticator
-pyyaml
+passlib
+bcrypt
