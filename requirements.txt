@@ -4,4 +4,3 @@ matplotlib
 wordcloud
 google-generativeai
 passlib
-bcrypt
