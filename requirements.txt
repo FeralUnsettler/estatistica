@@ -1,19 +1,10 @@
 streamlit
 pandas
 numpy
+matplotlib
 plotly
-folium
-streamlit-folium
-geopy
-requests
-
-# IA – busca semântica
-sentence-transformers
-faiss-cpu
-
-# Exportação PDF e PowerPoint
-reportlab
+wordcloud
+scikit-learn
+fpdf
 python-pptx
-
-openpyxl
-python-dotenv
+joblib
