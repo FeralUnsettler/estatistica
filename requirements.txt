@@ -4,3 +4,4 @@ matplotlib
 wordcloud
 google-generativeai
 passlib
+reportlab
