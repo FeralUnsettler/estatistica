@@ -1,8 +1,6 @@
 # ================================================================
-# REPARA ANALYTICS — v11.0
-# Compatível com Streamlit Cloud
-# Login com st.dialog + Painel Admin + pbkdf2_sha256
-# CSV seguro (sem erros), Gemini Flash integrado
+# REPARA ANALYTICS — v13.0
+# Completo: Auth (secrets.toml) + Gemini Chat + PDF + KPIs + CSV robusto
 # ================================================================
 
 import streamlit as st
@@ -10,383 +8,496 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from wordcloud import WordCloud
 import google.generativeai as genai
+from passlib.context import CryptContext
 import time
 import secrets
-from passlib.context import CryptContext
+import io
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
+from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.lib.pagesizes import A4
 
-# ================================================================
-# CONFIG GLOBAL
-# ================================================================
+# ----------------------------
+# CONFIGURAÇÃO INICIAL
+# ----------------------------
 st.set_page_config(page_title="Repara Analytics", layout="wide")
-
-# Segurança sem bcrypt
-PWD_CTX = CryptContext(schemes=["pbkdf2_sha256"], deprecated="auto")
-
-RESET_TOKEN_TTL = 15 * 60  # 15 min
-
-# Google Gemini
 genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
 
-# ================================================================
-# LOAD USERS
-# ================================================================
-def load_users():
-    raw = st.secrets.get("users", {})
+# use pbkdf2_sha256 for compatibility on Streamlit Cloud
+PWD_CTX = CryptContext(schemes=["pbkdf2_sha256"], deprecated="auto")
+RESET_TOKEN_TTL = 15 * 60  # 15 minutos
 
+# ----------------------------
+# UTIL: carregar users do secrets.toml
+# ----------------------------
+def load_users():
+    raw = st.secrets.get("users", {}) or {}
     users = {}
-    for username, info in raw.items():
-        users[username] = {
+    for u, info in raw.items():
+        users[u] = {
             "name": info.get("name"),
             "email": info.get("email"),
             "password": info.get("password"),
         }
     return users
 
-
 USERS = load_users()
 
-# ================================================================
-# TOKEN DE REDEFINIÇÃO
-# ================================================================
+# ----------------------------
+# Tokens de recovery (session-state)
+# ----------------------------
 def init_tokens():
     if "reset_tokens" not in st.session_state:
         st.session_state.reset_tokens = {}
-
 
 def generate_token(username):
     token = secrets.token_urlsafe(16)
     st.session_state.reset_tokens[token] = {
         "username": username,
-        "expire": time.time() + RESET_TOKEN_TTL,
+        "expire": time.time() + RESET_TOKEN_TTL
     }
     return token
-
 
 def validate_token(token):
     entry = st.session_state.reset_tokens.get(token)
     if not entry:
-        return False, "Token inválido."
+        return False, "Token inválido"
     if time.time() > entry["expire"]:
         del st.session_state.reset_tokens[token]
-        return False, "Token expirado."
+        return False, "Token expirado"
     return True, entry["username"]
 
-
-# ================================================================
-# PASSWORD / AUTH
-# ================================================================
-def verify_password(password, hashed):
+# ----------------------------
+# Auth helpers
+# ----------------------------
+def verify_password(plain, hashed):
     try:
-        return PWD_CTX.verify(password, hashed)
-    except:
+        return PWD_CTX.verify(plain, hashed)
+    except Exception:
         return False
-
 
 def authenticate(username, password):
     if username not in USERS:
         return False, "Usuário não encontrado."
-
     if verify_password(password, USERS[username]["password"]):
         return True, USERS[username]
-
     return False, "Senha incorreta."
 
-
-# ================================================================
-# CSS BASE
-# ================================================================
+# ----------------------------
+# CSS
+# ----------------------------
 def inject_css():
     st.markdown("""
     <style>
-        .login-box {
-            background: #ffffff;
-            padding: 25px;
-            border-radius: 12px;
-            box-shadow: 0 8px 20px rgba(0,0,0,0.12);
-        }
+    .login-box { background: #ffffff; padding: 20px; border-radius: 10px; box-shadow: 0 6px 18px rgba(0,0,0,0.12); }
+    .login-title { font-size: 22px; font-weight:700; color:#0b63ce; text-align:center; }
     </style>
     """, unsafe_allow_html=True)
 
-
-# ================================================================
-# LOGIN DIALOG
-# ================================================================
+# ----------------------------
+# DIALOGS (não aninhar)
+# ----------------------------
 @st.dialog("Login")
 def login_dialog():
     inject_css()
-
     st.markdown("<div class='login-box'>", unsafe_allow_html=True)
+    st.markdown("<div class='login-title'>REPARA — Login</div>", unsafe_allow_html=True)
 
-    username = st.text_input("Usuário")
+    user = st.text_input("Usuário")
     pwd = st.text_input("Senha", type="password")
 
     if st.button("Entrar"):
-        ok, info = authenticate(username, pwd)
+        ok, info = authenticate(user, pwd)
         if ok:
             st.session_state.logged = True
             st.session_state.userinfo = info
             st.session_state.page = "main"
-            st.success("Bem-vindo!")
-            st.rerun()
+            st.success("Login bem-sucedido.")
+            st.experimental_rerun()
         else:
             st.error(info)
 
     if st.button("Esqueci a senha"):
+        # não abre nested dialog: sinaliza para abrir fora
         st.session_state.show_recovery = True
 
     st.markdown("</div>", unsafe_allow_html=True)
 
-
-# ================================================================
-# RECUPERAÇÃO (DIÁLOGO SEPARADO)
-# ================================================================
 @st.dialog("Recuperação de senha")
 def recovery_dialog():
-    username = st.text_input("Usuário para recuperação")
-
+    st.markdown("<div class='login-box'>", unsafe_allow_html=True)
+    st.markdown("<div class='login-title'>Recuperação de senha</div>", unsafe_allow_html=True)
+    username = st.text_input("Usuário para gerar token", key="recovery_user")
     if st.button("Gerar token"):
         if username not in USERS:
             st.error("Usuário não encontrado.")
         else:
             token = generate_token(username)
-            st.success("Token gerado!")
-            st.info(f"Use este token:\n\n`{token}`")
+            st.success("Token gerado (válido por 15 minutos).")
+            st.info(f"Token: `{token}` — em produção, envie por e-mail.")
+    st.markdown("</div>", unsafe_allow_html=True)
 
-
-# ================================================================
-# REDEFINIÇÃO DE SENHA (UI)
-# ================================================================
-def reset_password_ui():
-    st.subheader("🔐 Redefinir senha")
-
-    token = st.text_input("Token")
-    new_pwd = st.text_input("Nova senha", type="password")
-
-    if st.button("Atualizar senha"):
-        ok, username = validate_token(token)
-        if not ok:
-            st.error(username)
-            return
-
-        hashed = PWD_CTX.hash(new_pwd)
-
-        st.success("Senha atualizada!")
-        st.code(
-            f"""
-[users.{username}]
-name = "{USERS[username]['name']}"
-email = "{USERS[username]['email']}"
-password = "{hashed}"
-            """,
-            language="toml"
-        )
-
-
-# ================================================================
-# GEMINI — ANÁLISE IA
-# ================================================================
-def gemini_analyse(text_list):
-    if not text_list:
-        return "Nenhum texto disponível."
-
-    model = genai.GenerativeModel("gemini-2.5-flash")
-
-    prompt = f"""
-Analise profundamente os textos abaixo e gere:
-
-- Resumo executivo
-- Clusters temáticos
-- Emoções predominantes
-- Tabela: Tema | Exemplo | Impacto | Ação recomendada
-- Recomendações finais
-
----
-{chr(10).join(text_list)}
-"""
-
-    out = model.generate_content(prompt)
-    return out.text
-
-
-# ================================================================
-# CSV READER 100% SEGURO
-# ================================================================
+# ----------------------------
+# Leitura CSV robusta (detecta delimitador)
+# ----------------------------
 def read_csv_any(file):
     if file is None:
         return None
 
-    if hasattr(file, "size") and file.size == 0:
-        st.warning("⚠ O arquivo enviado está vazio.")
-        return None
-
+    # file may be a UploadedFile or file-like
     try:
-        df = pd.read_csv(file, sep=None, engine="python")
-        if df.empty:
-            st.warning("⚠ O CSV não contém dados.")
+        size = getattr(file, "size", None)
+        if size == 0:
+            st.warning("⚠ Arquivo vazio enviado.")
             return None
-        return df
+    except Exception:
+        pass
 
+    delimiters = [",", ";", "\t", "|"]
+    # try each delimiter: but we must rewind buffer between attempts if file supports seek
+    for delim in delimiters:
+        try:
+            if hasattr(file, "seek"):
+                try:
+                    file.seek(0)
+                except Exception:
+                    pass
+            df = pd.read_csv(file, sep=delim)
+            if not df.empty:
+                return df
+        except Exception:
+            continue
+
+    # final attempt with python engine autodetect
+    try:
+        if hasattr(file, "seek"):
+            try:
+                file.seek(0)
+            except Exception:
+                pass
+        df = pd.read_csv(file, sep=None, engine="python")
+        if not df.empty:
+            return df
     except pd.errors.EmptyDataError:
-        st.error("⚠ O arquivo está vazio ou corrompido.")
+        st.error("⚠ CSV vazio ou corrompido.")
+        return None
+    except Exception:
+        st.error("⚠ Não foi possível determinar o delimitador do CSV. Abra o arquivo e verifique o formato (use , ; \\t ou |).")
         return None
 
-    except Exception as e:
-        st.error(f"Erro ao ler o CSV: {e}")
-        return None
-
-
-# ================================================================
-# COLUNA DE TEXTO AUTOMÁTICA
-# ================================================================
+# ----------------------------
+# Inferência de colunas textuais (robusta)
+# ----------------------------
 def infer_cols(df):
+    lower = {col.lower(): col for col in df.columns}
     def find(keys):
-        for col in df.columns:
-            if any(k in col.lower() for k in keys):
-                return col
+        for k in keys:
+            for low, real in lower.items():
+                if k in low:
+                    return real
         return None
-
     return {
-        "pain": find(["dor", "feedback", "coment", "desafio"]),
-        "hr": find(["gestao", "rh", "motivo", "pain"]),
+        "pain": find(["feedback", "dor", "coment", "comentário", "descricao", "descrição", "texto", "observacao", "obs"]),
+        "hr": find(["gestao", "rh", "motivo", "problema", "challenge", "hr", "recrut"])
     }
 
+# ----------------------------
+# Gemini analysis helper
+# ----------------------------
+def gemini_analyse(text_list, title="Análise"):
+    if not text_list:
+        return "Nenhum texto para análise."
+    joined = "\n".join(str(t) for t in text_list)
+    prompt = f"""
+You are a senior data analyst. Provide a concise structured response for the text below:
 
-# ================================================================
-# PAINEL ADMIN
-# ================================================================
-def admin_panel():
+Title: {title}
 
-    st.title("🛡️ Painel Administrativo")
+Tasks:
+1) Executive summary (short)
+2) Top themes (list)
+3) Emotions / sentiment summary
+4) Actionable recommendations
+5) A table (Theme | Example | Impact | Suggested Action)
 
-    st.subheader("Usuários atuais")
-    for user, info in USERS.items():
-        st.markdown(f"- **{user}** — {info['email']}")
+Text:
+{joined}
+"""
+    model = genai.GenerativeModel("gemini-2.5-flash")
+    resp = model.generate_content(prompt)
+    return resp.text
 
-    st.markdown("---")
-    st.subheader("Criar novo usuário")
+# ----------------------------
+# Chat with Gemini (session chat)
+# ----------------------------
+def chat_with_gemini_context(df_cand, df_emp):
+    st.header("🧠 Chat com Gemini — pergunte sobre os dados")
+    if "chat_history" not in st.session_state:
+        st.session_state.chat_history = []
 
-    username = st.text_input("Username")
-    name = st.text_input("Nome completo")
-    email = st.text_input("Email")
-    pwd = st.text_input("Senha", type="password")
+    # Build concise context (markdown) — limit to 10 rows each
+    context = ""
+    if df_cand is not None:
+        context += "### Candidatos (preview)\n"
+        context += df_cand.head(10).to_markdown() + "\n\n"
+    if df_emp is not None:
+        context += "### Empresas (preview)\n"
+        context += df_emp.head(10).to_markdown() + "\n\n"
 
-    if st.button("Gerar bloco TOML"):
-        hashed = PWD_CTX.hash(pwd)
-        st.code(
-            f"""
-[users.{username}]
-name = "{name}"
-email = "{email}"
-password = "{hashed}"
-            """,
-            language="toml"
+    # show history
+    for i, msg in enumerate(st.session_state.chat_history):
+        role = "Você" if msg["role"] == "user" else "IA"
+        st.markdown(f"**{role}:** {msg['text']}")
+        if i < len(st.session_state.chat_history)-1:
+            st.markdown("---")
+
+    user_q = st.text_input("Digite sua pergunta sobre os dados", key="chat_input")
+    if st.button("Enviar pergunta"):
+        if not user_q.strip():
+            return
+        st.session_state.chat_history.append({"role":"user","text":user_q})
+        # prepare prompt with context + question
+        prompt = f"""Você é um analista de dados. Baseie-se apenas no contexto fornecido abaixo (trechos dos CSVs) e responda objetivamente.
+
+Contexto:
+{context}
+
+Pergunta:
+{user_q}
+"""
+        model = genai.GenerativeModel("gemini-2.5-flash")
+        resp = model.generate_content(prompt)
+        ans = resp.text
+        st.session_state.chat_history.append({"role":"assistant","text":ans})
+        st.experimental_rerun()
+
+# ----------------------------
+# PDF generation (ReportLab -> BytesIO)
+# ----------------------------
+def generate_pdf_bytes(title, markdown_text):
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=A4)
+    styles = getSampleStyleSheet()
+    story = []
+    story.append(Paragraph(title, styles["Title"]))
+    story.append(Spacer(1, 12))
+    # split markdown_text reasonably
+    for line in markdown_text.split("\n"):
+        if line.strip() == "":
+            story.append(Spacer(1,6))
+        else:
+            # escape if too long
+            story.append(Paragraph(line.replace("&","and"), styles["Normal"]))
+    doc.build(story)
+    buffer.seek(0)
+    return buffer
+
+# ----------------------------
+# PDF download helper UI
+# ----------------------------
+def pdf_download_button(report_text, title="Relatório REPARA"):
+    st.subheader("📄 Relatório PDF")
+    if st.button("Gerar PDF do relatório"):
+        pdf_bytes = generate_pdf_bytes(title, report_text)
+        st.download_button(
+            label="📥 Baixar relatório (PDF)",
+            data=pdf_bytes,
+            file_name="relatorio_repara.pdf",
+            mime="application/pdf"
         )
 
+# ----------------------------
+# KPIs dashboard
+# ----------------------------
+def dashboard_kpis(df_cand, df_emp):
+    st.header("📊 KPIs Rápidos")
+    c1,c2,c3 = st.columns(3)
+    if df_cand is not None:
+        c1.metric("Candidatos", len(df_cand))
+        c2.metric("Colunas Candidatos", len(df_cand.columns))
+    else:
+        c1.metric("Candidatos", "—")
+        c2.metric("Colunas Candidatos", "—")
+    if df_emp is not None:
+        c3.metric("Empresas", len(df_emp))
+    else:
+        c3.metric("Empresas", "—")
+
+# ----------------------------
+# Admin panel (generate TOML blocks)
+# ----------------------------
+def admin_panel_ui():
+    st.title("🛡️ Painel Admin")
+    st.info("Alterações no secrets.toml devem ser feitas manualmente no Streamlit Cloud. Aqui você gera blocos TOML prontos.")
+    st.subheader("Usuários registrados")
+    for u, info in USERS.items():
+        st.markdown(f"- **{u}** — {info['email']}")
     st.markdown("---")
-    reset_password_ui()
+    st.subheader("Criar novo usuário (gera bloco TOML)")
+    nu = st.text_input("Username (ex: luciano)", key="admin_new_user")
+    nm = st.text_input("Nome completo", key="admin_new_name")
+    em = st.text_input("Email", key="admin_new_email")
+    pw = st.text_input("Senha (gera hash)", type="password", key="admin_new_pw")
+    if st.button("Gerar bloco TOML"):
+        if not nu or not pw:
+            st.error("Preencha username e senha.")
+        else:
+            h = PWD_CTX.hash(pw)
+            st.success("Copie o bloco e cole no secrets.toml")
+            st.code(f'[users.{nu}]\nname = "{nm}"\nemail = "{em}"\npassword = "{h}"', language="toml")
+    st.markdown("---")
+    st.subheader("Gerar hash isolado")
+    ph = st.text_input("Senha para hash", type="password", key="admin_hash_pw")
+    if st.button("Gerar hash isolado"):
+        if not ph:
+            st.error("Digite uma senha.")
+        else:
+            st.code(PWD_CTX.hash(ph))
 
-
-# ================================================================
-# APP PRINCIPAL
-# ================================================================
+# ----------------------------
+# APP MAIN
+# ----------------------------
 def main_app():
-
-    st.title("📊 Repara Analytics")
+    st.title("📊 REPARA Analytics — v13.0")
 
     st.sidebar.success(f"Usuário: {st.session_state.userinfo['name']}")
-
     if st.sidebar.button("Painel Admin"):
         st.session_state.page = "admin"
-        st.rerun()
-
+        st.experimental_rerun()
     if st.sidebar.button("Sair"):
         st.session_state.logged = False
-        st.rerun()
+        st.experimental_rerun()
 
+    # page routing
     if st.session_state.page == "admin":
-        admin_panel()
+        # restrict admin by email
+        if st.session_state.userinfo.get("email") != "admin@repara.com":
+            st.error("Acesso restrito ao administrador.")
+            return
+        admin_panel_ui()
         return
 
-    st.header("🔍 Upload de CSVs para análise")
+    # Uploads
+    st.sidebar.header("📥 Upload CSVs")
+    cand_file = st.sidebar.file_uploader("Candidatos (CSV)", type=["csv"])
+    emp_file = st.sidebar.file_uploader("Empresas (CSV)", type=["csv"])
 
-    cand = st.file_uploader("CSV de candidatos")
-    emp = st.file_uploader("CSV de empresas")
+    df_cand = read_csv_any(cand_file) if cand_file else None
+    df_emp = read_csv_any(emp_file) if emp_file else None
 
-    # -----------------------------------------------------------------
-    # CANDIDATOS
-    # -----------------------------------------------------------------
-    if cand:
-        df = read_csv_any(cand)
-        if df is not None:
-            st.subheader("Candidatos")
-            st.dataframe(df)
+    dashboard_kpis(df_cand, df_emp)
 
-            cols = infer_cols(df)
+    tabs = st.tabs(["👤 Candidatos", "🏢 Empresas", "🔀 Análise Cruzada", "💬 Chat IA"])
 
-            if cols["pain"]:
-                if st.button("IA — Análise dos candidatos"):
-                    st.markdown(gemini_analyse(df[cols["pain"]].dropna().tolist()))
+    # --- Candidatos tab
+    with tabs[0]:
+        st.header("👤 Candidatos")
+        if df_cand is not None:
+            st.dataframe(df_cand)
+            cols = infer_cols(df_cand)
+            if cols.get("pain"):
+                st.subheader("☁️ Wordcloud (campo detectado: %s)" % cols["pain"])
+                text = " ".join(df_cand[cols["pain"]].dropna().astype(str))
+                if text:
+                    wc = WordCloud(width=900, height=400).generate(text)
+                    fig, ax = plt.subplots(figsize=(10,4))
+                    ax.imshow(wc); ax.axis("off")
+                    st.pyplot(fig)
+                if st.button("IA — analisar candidatos"):
+                    result = gemini_analyse(df_cand[cols["pain"]].dropna().tolist(), title="Candidatos")
+                    st.markdown(result)
+                    pdf_download_button(result, title="Análise Candidatos")
+            else:
+                st.info("Nenhuma coluna textual detectada automaticamente. Renomeie/indique coluna com feedbacks.")
+        else:
+            st.info("Envie o CSV de candidatos pela sidebar.")
 
-    # -----------------------------------------------------------------
-    # EMPRESAS
-    # -----------------------------------------------------------------
-    if emp:
-        df = read_csv_any(emp)
-        if df is not None:
-            st.subheader("Empresas")
-            st.dataframe(df)
+    # --- Empresas tab
+    with tabs[1]:
+        st.header("🏢 Empresas")
+        if df_emp is not None:
+            st.dataframe(df_emp)
+            cols = infer_cols(df_emp)
+            if cols.get("hr"):
+                st.subheader("Top desafios (campo detectado: %s)" % cols["hr"])
+                try:
+                    top = df_emp[cols["hr"]].dropna().astype(str).value_counts().head(10)
+                    fig, ax = plt.subplots()
+                    top.plot(kind="barh", ax=ax)
+                    st.pyplot(fig)
+                except Exception:
+                    st.info("Não foi possível plotar top — verifique dados.")
+                if st.button("IA — analisar empresas"):
+                    result = gemini_analyse(df_emp[cols["hr"]].dropna().tolist(), title="Empresas")
+                    st.markdown(result)
+                    pdf_download_button(result, title="Análise Empresas")
+            else:
+                st.info("Nenhuma coluna textual detectada automaticamente nas empresas.")
+        else:
+            st.info("Envie o CSV de empresas pela sidebar.")
 
-            cols = infer_cols(df)
-
-            if cols["hr"]:
-                if st.button("IA — Análise das empresas"):
-                    st.markdown(gemini_analyse(df[cols["hr"]].dropna().tolist()))
-
-    # -----------------------------------------------------------------
-    # ANÁLISE CRUZADA
-    # -----------------------------------------------------------------
-    if cand and emp:
-        df1 = read_csv_any(cand)
-        df2 = read_csv_any(emp)
-
-        if df1 is not None and df2 is not None:
-
-            cols1 = infer_cols(df1)
-            cols2 = infer_cols(df2)
-
+    # --- Cruzada
+    with tabs[2]:
+        st.header("🔀 Análise Cruzada")
+        if df_cand is None or df_emp is None:
+            st.info("Envie ambos os CSVs (candidatos e empresas) para análise cruzada.")
+        else:
+            cols1 = infer_cols(df_cand)
+            cols2 = infer_cols(df_emp)
             texts = []
+            if cols1.get("pain"):
+                texts += df_cand[cols1["pain"]].dropna().tolist()
+            if cols2.get("hr"):
+                texts += df_emp[cols2["hr"]].dropna().tolist()
+            if not texts:
+                st.info("Não foram detectadas colunas textuais para cruzamento.")
+            else:
+                if st.button("IA — Análise cruzada"):
+                    result = gemini_analyse(texts, title="Cruzada")
+                    st.markdown(result)
+                    pdf_download_button(result, title="Análise Cruzada")
 
-            if cols1["pain"]:
-                texts += df1[cols1["pain"]].dropna().tolist()
-            if cols2["hr"]:
-                texts += df2[cols2["hr"]].dropna().tolist()
+    # --- Chat IA
+    with tabs[3]:
+        st.header("💬 Chat com Gemini")
+        st.info("Pergunte sobre o conteúdo dos CSVs (contexto limitado aos previews).")
+        chat_with_gemini_context(df_cand, df_emp)
 
-            if st.button("IA — Análise cruzada"):
-                st.markdown(gemini_analyse(texts))
+    # footer: reset password area
+    st.markdown("---")
+    st.header("🔐 Redefinir senha (se já possui token)")
+    token_val = st.text_input("Token de recuperação", key="reset_token")
+    new_password = st.text_input("Nova senha", type="password", key="reset_new_pw")
+    if st.button("Redefinir senha"):
+        if not token_val:
+            st.error("Informe o token.")
+        else:
+            ok, resp = validate_token(token_val)
+            if not ok:
+                st.error(resp)
+            else:
+                username = resp
+                hashed = PWD_CTX.hash(new_password)
+                st.success("Senha atualizada — copie o bloco abaixo para o secrets.toml:")
+                st.code(f'[users.{username}]\nname = "{USERS[username]["name"]}"\nemail = "{USERS[username]["email"]}"\npassword = "{hashed}"', language="toml")
 
-
-# ================================================================
-# EXECUÇÃO
-# ================================================================
+# ----------------------------
+# Execução
+# ----------------------------
 inject_css()
+init_tokens = init_tokens  # keep name consistent
 init_tokens()
 
 if "logged" not in st.session_state:
     st.session_state.logged = False
-
 if "page" not in st.session_state:
     st.session_state.page = "main"
-
 if "show_recovery" not in st.session_state:
     st.session_state.show_recovery = False
 
-# LOGIN / RECOVERY
 if not st.session_state.logged:
     if st.button("Entrar"):
         login_dialog()
-
     if st.session_state.show_recovery:
         recovery_dialog()
-
 else:
     main_app()
