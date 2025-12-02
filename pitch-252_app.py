@@ -1,7 +1,7 @@
 # ================================================================
-# REPARA ANALYTICS — v6.0
-# Autenticação via SECRETS.TOML (sem YAML)
-# Compatível com Streamlit Cloud
+# REPARA ANALYTICS — v8.0
+# Streamlit Cloud version (100% secrets.toml)
+# Login modal + admin panel + Gemini 2.5 Flash + CSV analytics
 # ================================================================
 
 import streamlit as st
@@ -12,23 +12,23 @@ import google.generativeai as genai
 from passlib.context import CryptContext
 import secrets
 import time
-from datetime import datetime
 
 # ================================================================
-# CONFIGURAÇÕES
+# CONFIGURAÇÕES INICIAIS
 # ================================================================
+st.set_page_config(page_title="Repara Analytics", layout="wide")
+
 PWD_CTX = CryptContext(schemes=["bcrypt"], deprecated="auto")
-RESET_TOKEN_TTL = 15 * 60   # 15 minutos
+RESET_TOKEN_TTL = 15 * 60   # token válido por 15 minutos
 
 genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
 
 # ================================================================
 # CARREGAR USERS DO SECRETS.TOML
 # ================================================================
-def load_users_from_secrets():
+def load_users():
     users_raw = st.secrets.get("users", {})
     users = {}
-
     for username, info in users_raw.items():
         users[username] = {
             "name": info.get("name"),
@@ -37,14 +37,14 @@ def load_users_from_secrets():
         }
     return users
 
-USERS = load_users_from_secrets()
+USERS = load_users()
 
 # ================================================================
-# FUNÇÕES DE SEGURANÇA
+# SEGURANÇA
 # ================================================================
-def verify_password(plain, hashed):
+def verify_password(password, hashed):
     try:
-        return PWD_CTX.verify(plain, hashed)
+        return PWD_CTX.verify(password, hashed)
     except:
         return False
 
@@ -56,7 +56,7 @@ def authenticate(username, password):
     return False, "Senha incorreta"
 
 # ================================================================
-# RESET TOKEN EM SESSION STATE
+# TOKENS DE RECUPERAÇÃO
 # ================================================================
 def init_reset_tokens():
     if "reset_tokens" not in st.session_state:
@@ -80,33 +80,34 @@ def validate_token(token):
     return True, entry["username"]
 
 # ================================================================
-# CSS PARA MODAL
+# CSS
 # ================================================================
 def inject_css():
     st.markdown("""
-        <style>
-        .login-box {
-            background:white;
-            padding:25px;
-            border-radius:12px;
-            box-shadow:0 8px 20px rgba(0,0,0,0.15);
-        }
-        .login-title {
-            font-size:26px;
-            font-weight:700;
-            color:#0b63ce;
-            text-align:center;
-        }
-        </style>
+    <style>
+    .login-box {
+        background: white;
+        padding: 25px;
+        border-radius: 12px;
+        box-shadow: 0 8px 20px rgba(0,0,0,0.15);
+    }
+    .login-title {
+        font-size: 26px;
+        font-weight: 700;
+        color: #0b63ce;
+        text-align: center;
+    }
+    </style>
     """, unsafe_allow_html=True)
 
 # ================================================================
-# LOGIN MODAL
+# MODAL DE LOGIN
 # ================================================================
 def login_modal():
     with st.modal("Login"):
         inject_css()
         st.markdown("<div class='login-box'>", unsafe_allow_html=True)
+
         st.markdown("<div class='login-title'>REPARA Login</div>", unsafe_allow_html=True)
 
         user = st.text_input("Usuário")
@@ -116,7 +117,8 @@ def login_modal():
             ok, data = authenticate(user, pwd)
             if ok:
                 st.session_state.logged = True
-                st.session_state.user = data
+                st.session_state.userinfo = data
+                st.session_state.page = "main"
                 st.success("Autenticado!")
                 st.experimental_rerun()
             else:
@@ -128,55 +130,65 @@ def login_modal():
         st.markdown("</div>", unsafe_allow_html=True)
 
 # ================================================================
-# RECUPERAÇÃO DE SENHA MODAL
+# MODAL DE RECUPERAÇÃO
 # ================================================================
 def recovery_modal():
-    with st.modal("Recuperar senha"):
-        user = st.text_input("Usuário para recuperação")
+    with st.modal("Recuperação de Senha"):
+        username = st.text_input("Usuário para recuperação")
+
         if st.button("Gerar token"):
-            if user not in USERS:
+            if username not in USERS:
                 st.error("Usuário não encontrado")
             else:
-                token = generate_token(user)
-                st.success("Token gerado!")
-                st.info(f"Token: `{token}` (Válido por 15 min)")
+                token = generate_token(username)
+                st.success("Token Gerado! Válido por 15 minutos.")
+                st.info(f"Token: `{token}`")
 
 # ================================================================
-# RESET DE SENHA (EXPANDER)
+# RESET DE SENHA
 # ================================================================
 def reset_password_section():
     st.subheader("🔐 Redefinir senha")
-    token = st.text_input("Token")
-    newp = st.text_input("Nova senha", type="password")
 
-    if st.button("Redefinir"):
+    token = st.text_input("Token")
+    new_pass = st.text_input("Nova senha", type="password")
+
+    if st.button("Atualizar senha"):
         ok, res = validate_token(token)
         if not ok:
             st.error(res)
         else:
             username = res
-            USERS[username]["password"] = PWD_CTX.hash(newp)
-            st.success("Senha atualizada!")
+            hashed = PWD_CTX.hash(new_pass)
+            st.success("Senha atualizada. Copie o bloco abaixo para o secrets.toml:")
+
+            st.code(
+                f'''
+[users.{username}]
+name = "{USERS[username]['name']}"
+email = "{USERS[username]['email']}"
+password = "{hashed}"
+                ''',
+                language="toml"
+                )
 
 # ================================================================
-# IA — ANALISAR TEXTO (GEMINI 2.5 FLASH)
+# IA — ANALISADOR
 # ================================================================
 def analisar_texto_gemini(lista):
     if len(lista) == 0:
-        return "Nenhum dado de texto encontrado."
+        return "Sem dados de texto."
 
     texto = "\n".join([str(t) for t in lista])
 
     prompt = f"""
-Analise este conjunto de respostas e descreva:
+Analise este conjunto de respostas e apresente:
 
 - Resumo executivo  
 - Clusters temáticos  
 - Emoções predominantes  
-- Top temas com %  
-- Dores e causas  
-- Ações recomendadas  
-- Tabela final Tema | Exemplo | Impacto | Ação
+- Tabela Tema | Exemplo | Impacto | Ação  
+- Recomendações  
 
 Texto:
 {texto}
@@ -202,6 +214,7 @@ def infer_cols(df):
                 if k in c.lower():
                     return c
         return None
+
     return {
         "age": find(["idade","age"]),
         "gender": find(["genero","sexo","gender"]),
@@ -210,27 +223,102 @@ def infer_cols(df):
     }
 
 # ================================================================
+# PAINEL ADMIN
+# ================================================================
+def admin_panel():
+    st.title("🛡️ Painel Administrativo")
+
+    if st.session_state.userinfo["email"] != "admin@repara.com":
+        st.error("Acesso restrito ao administrador.")
+        return
+
+    st.subheader("👥 Usuários Atuais")
+
+    for username, data in USERS.items():
+        st.markdown(f"- **{username}** — {data['name']} — {data['email']}")
+
+    st.markdown("---")
+    st.subheader("➕ Criar Novo Usuário")
+
+    new_user = st.text_input("Username")
+    new_name = st.text_input("Nome completo")
+    new_email = st.text_input("Email")
+    new_pass = st.text_input("Senha", type="password")
+
+    if st.button("Gerar bloco TOML"):
+        if not new_user or not new_pass:
+            st.error("Preencha os campos obrigatórios.")
+        else:
+            hashed = PWD_CTX.hash(new_pass)
+            st.success("Copie este bloco para o secrets.toml:")
+            st.code(
+                f'''
+[users.{new_user}]
+name = "{new_name}"
+email = "{new_email}"
+password = "{hashed}"
+                ''',
+                language="toml"
+            )
+
+    st.markdown("---")
+    st.subheader("🔐 Gerar Hash Isolado")
+
+    raw = st.text_input("Senha para geração de hash", type="password")
+    if st.button("Gerar hash isolado"):
+        st.code(PWD_CTX.hash(raw))
+
+    st.markdown("---")
+    st.subheader("🧨 Remover Usuário")
+
+    rm_user = st.text_input("Username para remover")
+
+    if st.button("Gerar instrução de remoção"):
+        if rm_user not in USERS:
+            st.error("Usuário não encontrado.")
+        else:
+            st.warning("Remova manualmente este bloco do secrets.toml:")
+            st.code(
+                f"[users.{rm_user}]\n# REMOVER ESTE BLOCO",
+                language="toml"
+            )
+
+# ================================================================
 # APP PRINCIPAL
 # ================================================================
 def main_app():
-    st.title("📊 REPARA Analytics — Dashboard + IA")
+    st.title("📊 Repara Analytics")
 
-    st.sidebar.success(f"Logado: {st.session_state.user['name']}")
-    if st.sidebar.button("Sair"):
-        st.session_state.logged = False
+    st.sidebar.success(f"Logado como: {st.session_state.userinfo['name']}")
+
+    if st.sidebar.button("Painel Admin"):
+        st.session_state.page = "admin"
         st.experimental_rerun()
 
-    # Upload CSVs
-    st.sidebar.header("📥 Upload CSVs")
-    f_cand = st.sidebar.file_uploader("Candidatos")
-    f_emp = st.sidebar.file_uploader("Empresas")
+    if st.sidebar.button("Sair"):
+        st.session_state.logged = False
+        st.session_state.page = "main"
+        st.experimental_rerun()
+
+    # Painel Admin
+    if st.session_state.get("page") == "admin":
+        admin_panel()
+        st.markdown("---")
+        reset_password_section()
+        return
+
+    st.header("🔍 Análise de Dados + IA")
+
+    st.sidebar.header("📥 Upload de CSVs")
+    cand = st.sidebar.file_uploader("Candidatos")
+    emp = st.sidebar.file_uploader("Empresas")
 
     tabs = st.tabs(["👤 Candidatos", "🏢 Empresas", "🔀 Cruzada"])
 
-    # Candidatos
+    # ---- TAB CANDIDATOS ----
     with tabs[0]:
-        if f_cand:
-            df = read_csv_any(f_cand)
+        if cand:
+            df = read_csv_any(cand)
             st.dataframe(df.head())
             m = infer_cols(df)
 
@@ -241,7 +329,6 @@ def main_app():
                 st.pyplot(fig)
 
             if m["pain"]:
-                st.subheader("☁️ Wordcloud")
                 text = " ".join(df[m["pain"]].dropna())
                 wc = WordCloud(width=900, height=400).generate(text)
                 fig, ax = plt.subplots()
@@ -249,13 +336,13 @@ def main_app():
                 ax.axis("off")
                 st.pyplot(fig)
 
-                if st.button("Análise IA (Candidatos)"):
-                    st.markdown(analisar_texto_gemini(df[m["pain"]].dropna().tolist()))
+                if st.button("IA — Análise dos Candidatos"):
+                    st.markdown(analisar_texto_gemini(df[m["pain"]].dropna()))
 
-    # Empresas
+    # ---- TAB EMPRESAS ----
     with tabs[1]:
-        if f_emp:
-            df = read_csv_any(f_emp)
+        if emp:
+            df = read_csv_any(emp)
             st.dataframe(df.head())
             m = infer_cols(df)
 
@@ -264,26 +351,28 @@ def main_app():
                 df[m["hr"]].dropna().value_counts().plot(kind="barh", ax=ax)
                 st.pyplot(fig)
 
-                if st.button("Análise IA (Empresas)"):
-                    st.markdown(analisar_texto_gemini(df[m["hr"]].dropna().tolist()))
+                if st.button("IA — Análise das Empresas"):
+                    st.markdown(analisar_texto_gemini(df[m["hr"]].dropna()))
 
-    # Cruzada
+    # ---- TAB CRUZADA ----
     with tabs[2]:
-        if f_cand and f_emp:
-            dfc = read_csv_any(f_cand)
-            dfe = read_csv_any(f_emp)
-            mc = infer_cols(dfc)
-            me = infer_cols(dfe)
-            textos = []
-            if mc["pain"]:
-                textos += dfc[mc["pain"]].dropna().tolist()
-            if me["hr"]:
-                textos += dfe[me["hr"]].dropna().tolist()
+        if cand and emp:
+            df1 = read_csv_any(cand)
+            df2 = read_csv_any(emp)
 
-            if st.button("Análise IA Cruzada"):
+            m1 = infer_cols(df1)
+            m2 = infer_cols(df2)
+
+            textos = []
+            if m1["pain"]:
+                textos += df1[m1["pain"]].dropna().tolist()
+            if m2["hr"]:
+                textos += df2[m2["hr"]].dropna().tolist()
+
+            if st.button("IA — Análise Cruzada"):
                 st.markdown(analisar_texto_gemini(textos))
         else:
-            st.info("Envie os dois CSVs para ativar a análise cruzada.")
+            st.info("Envie os dois CSVs para ativar esta seção.")
 
     st.markdown("---")
     reset_password_section()
@@ -296,6 +385,9 @@ init_reset_tokens()
 
 if "logged" not in st.session_state:
     st.session_state.logged = False
+
+if "page" not in st.session_state:
+    st.session_state.page = "main"
 
 if not st.session_state.logged:
     st.button("Entrar", on_click=login_modal)
