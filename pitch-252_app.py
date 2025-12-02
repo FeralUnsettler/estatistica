@@ -1,6 +1,7 @@
 # ================================================================
-# REPARA ANALYTICS v4.0 — STREAMLIT + GEMINI 2.5 FLASH
-# Com autenticação, análise IA, dashboards e CSV
+# REPARA ANALYTICS — v6.0
+# Autenticação via SECRETS.TOML (sem YAML)
+# Compatível com Streamlit Cloud
 # ================================================================
 
 import streamlit as st
@@ -8,246 +9,295 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from wordcloud import WordCloud
 import google.generativeai as genai
-import streamlit_authenticator as stauth
-import yaml
-from yaml.loader import SafeLoader
-import os
+from passlib.context import CryptContext
+import secrets
+import time
+from datetime import datetime
 
-# =======================================================
-# CONFIGURAÇÃO DO GEMINI VIA SECRETS
-# =======================================================
+# ================================================================
+# CONFIGURAÇÕES
+# ================================================================
+PWD_CTX = CryptContext(schemes=["bcrypt"], deprecated="auto")
+RESET_TOKEN_TTL = 15 * 60   # 15 minutos
+
 genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
 
-# =======================================================
-# CONFIGURAÇÃO DO LOGIN via streamlit-authenticator
-# =======================================================
+# ================================================================
+# CARREGAR USERS DO SECRETS.TOML
+# ================================================================
+def load_users_from_secrets():
+    users_raw = st.secrets.get("users", {})
+    users = {}
 
-config = {
-    "credentials": {
-        "usernames": {
-            "admin": {
-                "name": "Administrador",
-                "password": st.secrets["ADMIN_PASSWORD"], 
-            }
+    for username, info in users_raw.items():
+        users[username] = {
+            "name": info.get("name"),
+            "email": info.get("email"),
+            "password": info.get("password"),
         }
-    },
-    "cookie": {
-        "name": "repara_login",
-        "key": st.secrets["SIGN_KEY"],
-        "expiry_days": 3
-    },
-    "preauthorized": {
-        "emails": ["admin@repara.com"]
+    return users
+
+USERS = load_users_from_secrets()
+
+# ================================================================
+# FUNÇÕES DE SEGURANÇA
+# ================================================================
+def verify_password(plain, hashed):
+    try:
+        return PWD_CTX.verify(plain, hashed)
+    except:
+        return False
+
+def authenticate(username, password):
+    if username not in USERS:
+        return False, "Usuário não encontrado"
+    if verify_password(password, USERS[username]["password"]):
+        return True, USERS[username]
+    return False, "Senha incorreta"
+
+# ================================================================
+# RESET TOKEN EM SESSION STATE
+# ================================================================
+def init_reset_tokens():
+    if "reset_tokens" not in st.session_state:
+        st.session_state.reset_tokens = {}
+
+def generate_token(username):
+    token = secrets.token_urlsafe(16)
+    st.session_state.reset_tokens[token] = {
+        "username": username,
+        "expire": time.time() + RESET_TOKEN_TTL
     }
-}
+    return token
 
-authenticator = stauth.Authenticate(
-    config["credentials"], 
-    config["cookie"]["name"],
-    config["cookie"]["key"],
-    config["cookie"]["expiry_days"],
-)
+def validate_token(token):
+    entry = st.session_state.reset_tokens.get(token)
+    if not entry:
+        return False, "Token inválido"
+    if time.time() > entry["expire"]:
+        del st.session_state.reset_tokens[token]
+        return False, "Token expirou"
+    return True, entry["username"]
 
-name, auth_status, username = authenticator.login("Login", "main")
+# ================================================================
+# CSS PARA MODAL
+# ================================================================
+def inject_css():
+    st.markdown("""
+        <style>
+        .login-box {
+            background:white;
+            padding:25px;
+            border-radius:12px;
+            box-shadow:0 8px 20px rgba(0,0,0,0.15);
+        }
+        .login-title {
+            font-size:26px;
+            font-weight:700;
+            color:#0b63ce;
+            text-align:center;
+        }
+        </style>
+    """, unsafe_allow_html=True)
 
-# =======================
-# LOGIN BLOCK
-# =======================
-if auth_status == False:
-    st.error("❌ Usuário ou senha incorretos.")
+# ================================================================
+# LOGIN MODAL
+# ================================================================
+def login_modal():
+    with st.modal("Login"):
+        inject_css()
+        st.markdown("<div class='login-box'>", unsafe_allow_html=True)
+        st.markdown("<div class='login-title'>REPARA Login</div>", unsafe_allow_html=True)
 
-if auth_status == None:
-    st.warning("🟡 Digite suas credenciais para acessar.")
-    st.stop()
+        user = st.text_input("Usuário")
+        pwd = st.text_input("Senha", type="password")
 
-# Usuário autenticado
-authenticator.logout("Sair", "sidebar")
+        if st.button("Entrar"):
+            ok, data = authenticate(user, pwd)
+            if ok:
+                st.session_state.logged = True
+                st.session_state.user = data
+                st.success("Autenticado!")
+                st.experimental_rerun()
+            else:
+                st.error(data)
 
-# =======================
-# INTERFACE PRINCIPAL
-# =======================
+        if st.button("Esqueci a senha"):
+            recovery_modal()
 
-st.set_page_config(page_title="Repara Analytics", layout="wide")
-st.title("📊 Repara Analytics v4.0 — IA + CSV + Dashboards")
+        st.markdown("</div>", unsafe_allow_html=True)
 
-st.write(f"Bem-vindo, **{name}** 👋")
+# ================================================================
+# RECUPERAÇÃO DE SENHA MODAL
+# ================================================================
+def recovery_modal():
+    with st.modal("Recuperar senha"):
+        user = st.text_input("Usuário para recuperação")
+        if st.button("Gerar token"):
+            if user not in USERS:
+                st.error("Usuário não encontrado")
+            else:
+                token = generate_token(user)
+                st.success("Token gerado!")
+                st.info(f"Token: `{token}` (Válido por 15 min)")
 
+# ================================================================
+# RESET DE SENHA (EXPANDER)
+# ================================================================
+def reset_password_section():
+    st.subheader("🔐 Redefinir senha")
+    token = st.text_input("Token")
+    newp = st.text_input("Nova senha", type="password")
 
-# =======================================================
-# FUNÇÃO IA PARA ANÁLISE PROFUNDA
-# =======================================================
-def analisar_texto_gemini(lista_textos, titulo="Análise"):
-    if len(lista_textos) == 0:
-        return "Nenhum texto disponível."
+    if st.button("Redefinir"):
+        ok, res = validate_token(token)
+        if not ok:
+            st.error(res)
+        else:
+            username = res
+            USERS[username]["password"] = PWD_CTX.hash(newp)
+            st.success("Senha atualizada!")
 
-    texto_unificado = "\n".join([str(t) for t in lista_textos if pd.notna(t)])
+# ================================================================
+# IA — ANALISAR TEXTO (GEMINI 2.5 FLASH)
+# ================================================================
+def analisar_texto_gemini(lista):
+    if len(lista) == 0:
+        return "Nenhum dado de texto encontrado."
+
+    texto = "\n".join([str(t) for t in lista])
 
     prompt = f"""
-Você é um analista sênior de dados qualitativos, especialista em RH e comportamento.
+Analise este conjunto de respostas e descreva:
 
-Analise profundamente o conjunto de respostas e produza:
+- Resumo executivo  
+- Clusters temáticos  
+- Emoções predominantes  
+- Top temas com %  
+- Dores e causas  
+- Ações recomendadas  
+- Tabela final Tema | Exemplo | Impacto | Ação
 
-1. Resumo Executivo  
-2. Top 10 temas com percentuais  
-3. Emoções predominantes  
-4. Clusters semânticos  
-5. Principais dores  
-6. Causas prováveis  
-7. Recomendações para o MVP Repara  
-8. Métricas sugeridas  
-9. Tabela final com: Tema | Exemplo | Impacto | Ação
-
-TEXTO:
-----------------------------
-{texto_unificado}
-----------------------------
-
-Responda em MARKDOWN estruturado.
+Texto:
+{texto}
 """
 
     model = genai.GenerativeModel("gemini-2.5-flash")
-    resposta = model.generate_content(prompt)
-    return resposta.text
+    out = model.generate_content(prompt)
+    return out.text
 
-
-# =======================================================
-# FUNÇÕES AUXILIARES
-# =======================================================
-def read_csv_any(file):
+# ================================================================
+# CSV UTILITIES
+# ================================================================
+def read_csv_any(f):
     try:
-        return pd.read_csv(file, engine="python", sep=None)
+        return pd.read_csv(f, sep=None, engine="python")
     except:
-        return pd.read_csv(file, engine="python", sep=",")
+        return pd.read_csv(f)
 
-
-def infer_columns(df: pd.DataFrame):
-    mapping = {}
-    cols = df.columns.str.lower()
-
-    def find(patterns):
-        for p in patterns:
+def infer_cols(df):
+    def find(keys):
+        for k in keys:
             for c in df.columns:
-                if p in c.lower():
+                if k in c.lower():
                     return c
         return None
+    return {
+        "age": find(["idade","age"]),
+        "gender": find(["genero","sexo","gender"]),
+        "pain": find(["dor","pain","desafio","feedback","motivo"]),
+        "hr": find(["rh","hr","gestao","challenge","problem"])
+    }
 
-    mapping["age"] = find(["idade", "age"])
-    mapping["gender"] = find(["genero", "sexo", "gender"])
-    mapping["pain"] = find(["pain", "problema", "desafio", "dor", "feedback"])
-    mapping["hr"] = find(["hr", "gestao", "human", "challenge", "desafio"])
+# ================================================================
+# APP PRINCIPAL
+# ================================================================
+def main_app():
+    st.title("📊 REPARA Analytics — Dashboard + IA")
 
-    return mapping
+    st.sidebar.success(f"Logado: {st.session_state.user['name']}")
+    if st.sidebar.button("Sair"):
+        st.session_state.logged = False
+        st.experimental_rerun()
 
+    # Upload CSVs
+    st.sidebar.header("📥 Upload CSVs")
+    f_cand = st.sidebar.file_uploader("Candidatos")
+    f_emp = st.sidebar.file_uploader("Empresas")
 
-# =======================================================
-# UPLOAD DE ARQUIVOS
-# =======================================================
-st.sidebar.header("📥 Upload de CSVs")
-cand_file = st.sidebar.file_uploader("Candidatos CSV", type=["csv"])
-emp_file = st.sidebar.file_uploader("Empresas CSV", type=["csv"])
+    tabs = st.tabs(["👤 Candidatos", "🏢 Empresas", "🔀 Cruzada"])
 
-tab1, tab2, tab3 = st.tabs(["👤 Candidatos", "🏢 Empresas", "🔀 Cruzada"])
+    # Candidatos
+    with tabs[0]:
+        if f_cand:
+            df = read_csv_any(f_cand)
+            st.dataframe(df.head())
+            m = infer_cols(df)
 
+            if m["gender"]:
+                fig, ax = plt.subplots()
+                df[m["gender"]].fillna("N/A").value_counts().plot(kind="pie", autopct="%1.1f%%", ax=ax)
+                ax.set_ylabel("")
+                st.pyplot(fig)
 
-# =======================================================
-# TAB 1 — CANDIDATOS
-# =======================================================
-with tab1:
-    st.header("👤 Análise de Candidatos")
+            if m["pain"]:
+                st.subheader("☁️ Wordcloud")
+                text = " ".join(df[m["pain"]].dropna())
+                wc = WordCloud(width=900, height=400).generate(text)
+                fig, ax = plt.subplots()
+                ax.imshow(wc)
+                ax.axis("off")
+                st.pyplot(fig)
 
-    if cand_file:
-        df = read_csv_any(cand_file)
-        mapping = infer_columns(df)
+                if st.button("Análise IA (Candidatos)"):
+                    st.markdown(analisar_texto_gemini(df[m["pain"]].dropna().tolist()))
 
-        st.subheader("📄 Prévia")
-        st.dataframe(df.head())
+    # Empresas
+    with tabs[1]:
+        if f_emp:
+            df = read_csv_any(f_emp)
+            st.dataframe(df.head())
+            m = infer_cols(df)
 
-        col1, col2, col3 = st.columns(3)
-        col1.metric("Total", len(df))
-        col2.metric("Colunas", len(df.columns))
-        col3.metric("Campos texto", sum(df.dtypes == "object"))
+            if m["hr"]:
+                fig, ax = plt.subplots()
+                df[m["hr"]].dropna().value_counts().plot(kind="barh", ax=ax)
+                st.pyplot(fig)
 
-        if mapping["age"]:
-            st.subheader("📊 Idade")
-            fig, ax = plt.subplots(figsize=(6,4))
-            df[mapping["age"]].fillna("N/A").value_counts().plot(kind='bar', ax=ax)
-            st.pyplot(fig)
+                if st.button("Análise IA (Empresas)"):
+                    st.markdown(analisar_texto_gemini(df[m["hr"]].dropna().tolist()))
 
-        if mapping["gender"]:
-            st.subheader("📊 Gênero")
-            fig, ax = plt.subplots(figsize=(5,5))
-            df[mapping["gender"]].fillna("N/A").value_counts().plot(kind='pie', autopct='%1.1f%%', ax=ax)
-            ax.set_ylabel("")
-            st.pyplot(fig)
+    # Cruzada
+    with tabs[2]:
+        if f_cand and f_emp:
+            dfc = read_csv_any(f_cand)
+            dfe = read_csv_any(f_emp)
+            mc = infer_cols(dfc)
+            me = infer_cols(dfe)
+            textos = []
+            if mc["pain"]:
+                textos += dfc[mc["pain"]].dropna().tolist()
+            if me["hr"]:
+                textos += dfe[me["hr"]].dropna().tolist()
 
-        if mapping["pain"]:
-            st.subheader("☁️ Wordcloud")
-            text = " ".join(df[mapping["pain"]].dropna().astype(str))
-            wc = WordCloud(width=900, height=400).generate(text)
-            fig, ax = plt.subplots(figsize=(10,4))
-            ax.imshow(wc)
-            ax.axis("off")
-            st.pyplot(fig)
+            if st.button("Análise IA Cruzada"):
+                st.markdown(analisar_texto_gemini(textos))
+        else:
+            st.info("Envie os dois CSVs para ativar a análise cruzada.")
 
-            st.subheader("🤖 IA — Análise Profunda")
-            if st.button("Executar IA (Candidatos)"):
-                textos = df[mapping["pain"]].dropna().astype(str).tolist()
-                with st.spinner("Analisando com IA..."):
-                    out = analisar_texto_gemini(textos)
-                st.markdown(out)
+    st.markdown("---")
+    reset_password_section()
 
+# ================================================================
+# EXECUÇÃO
+# ================================================================
+inject_css()
+init_reset_tokens()
 
-# =======================================================
-# TAB 2 — EMPRESAS
-# =======================================================
-with tab2:
-    st.header("🏢 Análise das Empresas")
+if "logged" not in st.session_state:
+    st.session_state.logged = False
 
-    if emp_file:
-        df = read_csv_any(emp_file)
-        mapping = infer_columns(df)
-
-        st.subheader("📄 Prévia")
-        st.dataframe(df.head())
-
-        if mapping["hr"]:
-            st.subheader("📊 Desafios de RH")
-            fig, ax = plt.subplots(figsize=(6,4))
-            df[mapping["hr"]].dropna().astype(str).value_counts().head(6).plot(kind='barh', ax=ax)
-            st.pyplot(fig)
-
-            st.subheader("🤖 IA — Análise Profunda")
-            if st.button("Executar IA (Empresas)"):
-                textos = df[mapping["hr"]].dropna().astype(str).tolist()
-                with st.spinner("IA analisando..."):
-                    out = analisar_texto_gemini(textos)
-                st.markdown(out)
-
-
-# =======================================================
-# TAB 3 — ANÁLISE CRUZADA
-# =======================================================
-with tab3:
-    st.header("🔀 Análise Cruzada Candidatos x Empresas")
-
-    if cand_file and emp_file:
-        df_c = read_csv_any(cand_file)
-        df_e = read_csv_any(emp_file)
-
-        map_c = infer_columns(df_c)
-        map_e = infer_columns(df_e)
-
-        textos = []
-
-        if map_c["pain"]:
-            textos += df_c[map_c["pain"]].dropna().astype(str).tolist()
-
-        if map_e["hr"]:
-            textos += df_e[map_e["hr"]].dropna().astype(str).tolist()
-
-        if st.button("Executar IA Cruzada"):
-            with st.spinner("IA encontrando padrões, temas e conexões..."):
-                out = analisar_texto_gemini(textos, "Cruzada")
-            st.markdown(out)
-    else:
-        st.info("Carregue os dois CSVs para ativar esta seção.")
+if not st.session_state.logged:
+    st.button("Entrar", on_click=login_modal)
+else:
+    main_app()
