@@ -5,3 +5,4 @@ wordcloud
 google-generativeai
 passlib
 reportlab
+nltk
