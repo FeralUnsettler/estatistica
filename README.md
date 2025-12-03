@@ -1,5 +1,324 @@
+
 # 🧠 REPARA Analytics — Plataforma Inteligente de Análise de Talentos  
-**Versão: 13.2**  
+**Versão:** 13.3 (2025)  
+**Tecnologias:** Streamlit + Gemini AI + Python + Wordcloud + Pandas + ReportLab  
+**Ambiente:** Compatível com Streamlit Cloud
+
+---
+
+# 🚀 O que é o REPARA Analytics?
+
+O **REPARA Analytics v13.3** é uma plataforma inteligente projetada para analisar dados de candidatos e empresas a partir de arquivos CSV e gerar **insights automáticos** com apoio de IA (Gemini 2.5 Flash).
+
+A aplicação foi criada para o projeto **REPARA — Revela Talentos Para Todos**, com o objetivo de dar visibilidade a grupos sub-representados, gerar análises qualitativas e cruzadas, e auxiliar empresas e instituições educacionais a identificar padrões, dores e oportunidades.
+
+---
+
+# ✨ Principais Funcionalidades
+
+### 🔐 Autenticação Segura  
+- Login com UI moderna usando `st.dialog`  
+- Senhas com hash PBKDF2-SHA256  
+- Painel Admin para criar novos usuários e gerar blocos TOML  
+- Recuperação de senha com token temporário (15 minutos)  
+- Compatível com `secrets.toml` do Streamlit Cloud  
+
+---
+
+### 📄 Upload e Análise de CSV  
+- Leitura *robusta* de CSV com autodetecção de delimitador  
+- Normalização automática dos nomes das colunas  
+- Preview de até 50 linhas  
+- Detecção de colunas textuais usando algoritmo inteligente  
+- Suporte total a UTF-8, acentos e textos longos  
+- Tratamento de colunas vazias ou inconsistentes  
+
+---
+
+### 🤖 Análises com Inteligência Artificial (Gemini 2.5 Flash)  
+Para qualquer coluna textual selecionada:
+
+- Resumo Executivo  
+- Principais temas das respostas  
+- Quadro “Tema | Exemplo | Impacto | Ação recomendada”  
+- Recomendações práticas para o time de RH ou gestão  
+- Análises cruzadas (Candidatos × Empresas)  
+- Chat com IA usando contexto dos dois CSVs  
+
+---
+
+### 🎨 Visualizações  
+- Wordcloud personalizada  
+- KPIs básicos (quantidade de candidatos, empresas, colunas, etc.)  
+- Gráficos e tabelas dinâmicas  
+- Exportação de relatórios em PDF  
+
+---
+
+### 🛡️ Painel Administrador  
+- Gerenciamento de usuários  
+- Geração de hashes  
+- Blocos `TOML` prontos para colar no Streamlit Cloud  
+- Exclusivo para admin (ex.: `admin@repara.com`)  
+
+---
+
+# 🔥 Novidades da Versão 13.3  
+
+### ✔ DETECÇÃO TEXTUAL 100% REFEITA  
+Problema original:  
+O app exibia *“Nenhuma coluna textual detectada”* em CSVs válidos.
+
+Agora:
+
+- Detector usa regex avançado para identificar colunas com letras, inclusive acentuadas  
+- Mede score baseado em:
+  - % de células com texto  
+  - tamanho médio das respostas  
+  - diversidade de respostas  
+- Ordena automaticamente da mais relevante para a menos textual  
+- Sempre oferece **seleção manual**  
+- IA sempre disponível quando há qualquer coluna válida  
+
+---
+
+### ✔ NORMALIZAÇÃO DE COLUNAS  
+- Espaços removidos automaticamente  
+- Acentos normalizados internamente para detecção  
+- Nomes originais preservados na interface  
+
+---
+
+### ✔ MELHORIAS NO CHAT IA  
+O chat agora inclui:
+
+- Preview automático dos CSVs (até 8 linhas)  
+- Contexto enxuto para perguntas  
+- Histórico persistente  
+
+---
+
+### ✔ WORDCLOUD APRIMORADA  
+- Suporte a português  
+- Remoção de caracteres indesejados  
+- Renderização mais nítida  
+
+---
+
+### ✔ PDF PROFISSIONAL  
+- Usando ReportLab  
+- Título com estilo  
+- Layout limpo  
+- Download com um clique  
+
+---
+
+### ✔ PAINEL ADMIN COMPLETO  
+- Gerar usuários  
+- Gerar hashes  
+- TOML pronto  
+- Melhor UI  
+
+---
+
+### ✔ SEM MAIS `experimental_rerun()`  
+- Toda a navegação usa:
+
+```shell
+st.session_state._rerun = True
+st.rerun()
+```
+
+- Total compatibilidade com `st.dialog`  
+
+---
+
+# 📦 Requisitos
+
+Crie um arquivo **requirements.txt** contendo:
+
+```
+
+streamlit
+pandas
+matplotlib
+wordcloud
+reportlab
+google-generativeai
+passlib
+python-dotenv
+
+````
+
+(Esse é exatamente o arquivo recomendado para Streamlit Cloud.)
+
+---
+
+# ☁️ Deploy no Streamlit Cloud
+
+1. Suba para o GitHub:
+   - `app.py`
+   - `requirements.txt`
+   - `README.md`
+
+2. Acesse:  
+   https://streamlit.io/cloud
+
+3. Crie um novo app.
+
+4. Em **Settings → Secrets**, coloque:
+
+```toml
+GOOGLE_API_KEY = "SUA_CHAVE"
+
+[users.admin]
+name = "Administrador"
+email = "admin@repara.com"
+password = "$pbkdf2-sha256$..."
+
+[users.luciano]
+name = "Luciano"
+email = "luciano@repara.com"
+password = "$pbkdf2-sha256$..."
+````
+
+Você pode gerar hashes no painel admin ou com:
+
+```python
+from passlib.context import CryptContext
+pwd = CryptContext(schemes=["pbkdf2_sha256"])
+print(pwd.hash("SUA_SENHA"))
+```
+
+---
+
+# 📁 Estrutura do Projeto
+
+```
+📦 repara-analytics
+│
+├── app.py                # aplicativo completo v13.3
+├── requirements.txt
+└── README.md
+```
+
+---
+
+# 🧪 Como rodar localmente
+
+```bash
+pip install -r requirements.txt
+streamlit run app.py
+```
+
+Crie o arquivo:
+
+```
+mkdir .streamlit
+nano .streamlit/secrets.toml
+```
+
+E coloque suas chaves e usuários.
+
+---
+
+# 💬 Chat com IA
+
+Dentro do app:
+
+1. Vá na aba **“💬 Chat IA”**
+2. Pergunte qualquer coisa sobre os CSVs
+3. Gemini responde baseado no preview dos dados carregados
+
+---
+
+# 📊 Análises Cruzadas
+
+Na aba **“🔀 Cruzada”**:
+
+1. Selecione uma coluna textual de candidatos
+2. Selecione uma coluna textual de empresas
+3. Clique **“IA — Análise Cruzada”**
+
+Resultado:
+
+* Tema geral
+* Convergência percebida
+* Dores comuns
+* Recomendações
+
+---
+
+# 📄 Geração de PDF
+
+Todos os relatórios gerados pelo Gemini podem ser baixados em:
+
+```
+📥 Baixar PDF
+```
+
+Totalmente compatíveis com:
+
+* impressão
+* Google Drive
+* envio por email
+
+---
+
+# 📌 Segurança
+
+* Senhas nunca são armazenadas em texto plano
+* API Key fica em `secrets.toml`
+* Tokens de recuperação expiram em 15 minutos
+* Nada é armazenado no navegador do usuário
+* IA só recebe o mínimo necessário para análise
+
+---
+
+# 🧭 Roadmap da v13.x
+
+* [x] Novo detector de texto (robusto)
+* [x] Seleção manual de coluna textual
+* [x] Score por relevância
+* [x] Chat IA melhorado
+* [x] PDF profissional
+* [ ] Tema escuro
+* [ ] Exportação Excel consolidada
+* [ ] Dashboard com Plotly
+* [ ] Integração com Supabase
+* [ ] Múltiplos perfis: Admin / Analista / Gestor
+* [ ] Clusters automáticos nas respostas
+
+---
+
+# 👥 Equipe
+
+**Desenvolvido por:**
+Luciano Martins Fagundes
+
+**Assistente técnico:**
+ChatGPT — Build Assist Pro (2025)
+
+---
+
+# 🧭 Roadmap
+
+### 🔜 Futuras Melhorias
+
+* [ ] Suporte a upload múltiplo de CSV
+* [ ] Histórico salvo em Supabase
+* [ ] Exportação Excel consolidada
+* [ ] Painel de BI com Plotly
+* [ ] Modo escuro / tema personalizado
+* [ ] Autorização por papéis (admin / analista / gestor)
+* [ ] Avaliação automática de match candidato–empresa
+
+---
+---
+
+# Versões anteriores
+
+## 🧠 **Versão: 13.2**  
 
 Repara Analytics é uma plataforma de análise inteligente que conecta empresas e candidatos, permitindo gerar insights avançados a partir de respostas qualitativas em CSVs.  
 Ela utiliza **IA generativa (Gemini 2.5 Flash)**, dashboards visuais, análises automatizadas e um painel admin seguro com autenticação.
