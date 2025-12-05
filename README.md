@@ -62,6 +62,72 @@ Para qualquer coluna textual selecionada:
 - Exclusivo para admin (ex.: `admin@repara.com`)  
 
 ---
+---
+
+## 🚀 Novidades da versão 13.4.2
+### Streamlit + Gemini + Wordcloud Inteligente + Admin Panel
+
+### ✨ Wordcloud Inteligente Dark Mode
+- Fundo escuro premium
+- Temas selecionáveis:
+  - Dark Elegante
+  - Deep Purple
+  - Neon Blue
+  - Gold
+  - Carbon Gray
+
+### ❤️ Sentiment Lexicon PT-BR integrado
+Palavras emocionais agora têm peso extra:
+- positivas → +4
+- negativas → +4
+
+### 🧠 POS Heurística (sem spaCy — compatível com Streamlit Cloud)
+- identifica verbos, adjetivos e substantivos por morfologia
+- lematização leve
+- stopwords PT-BR + customizadas
+- compatível com CSVs reais
+
+### 🤖 Gemini 2.5 Flash
+- análise textual profunda
+- análise cruzada
+- chat contextual
+- geração de PDF automática
+
+### 🔐 Autenticação completa
+- PBKDF2-SHA256
+- painel admin para gerar novos usuários
+- blocos TOML para Streamlit Cloud
+
+---
+
+## 📦 Estrutura
+
+```
+repara/
+│── app.py
+│── requirements.txt
+└── README.md
+
+```
+
+---
+
+## 📥 Dependências (requirements.txt)
+
+```
+streamlit
+pandas
+matplotlib
+wordcloud
+google-generativeai
+passlib
+reportlab
+python-dotenv
+nltk
+```
+
+---
+---
 
 # 🔥 Novidades da Versão 13.3  
 
