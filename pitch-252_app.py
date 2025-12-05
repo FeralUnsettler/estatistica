@@ -1,8 +1,6 @@
-# ================================================================
-# REPARA ANALYTICS — v13.4
-# Wordcloud inteligente (sem spaCy) — usa NLTK + heurísticas
-# Mantém: Auth, Admin, Chat Gemini, PDF, KPIs, CSV robusto
-# ================================================================
+# REPARA Analytics — v13.4.1
+# Wordcloud inteligente (NLTK + heuristics), Gemini em PT-BR, login modal com explicação UX
+# Compatível com Streamlit Cloud — sem spaCy
 
 import streamlit as st
 import pandas as pd
@@ -26,19 +24,19 @@ from html import unescape
 # ----------------------------
 st.set_page_config(page_title="Repara Analytics", layout="wide")
 
-# configure gemini if API key present
+# Configure Gemini if key present (safe)
 if "GOOGLE_API_KEY" in st.secrets:
     try:
         genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
     except Exception:
         pass
 
-# ensure NLTK stopwords are available
+# Ensure NLTK stopwords (quiet)
 nltk.download("stopwords", quiet=True)
 from nltk.corpus import stopwords
 
 # ----------------------------
-# Requirements-safe security
+# Security & constants
 # ----------------------------
 PWD_CTX = CryptContext(schemes=["pbkdf2_sha256"], deprecated="auto")
 RESET_TOKEN_TTL = 15 * 60
@@ -60,7 +58,7 @@ def load_users():
 USERS = load_users()
 
 # ----------------------------
-# Token helpers
+# Session tokens helpers
 # ----------------------------
 def init_tokens():
     if "reset_tokens" not in st.session_state:
@@ -77,10 +75,10 @@ def generate_token(username):
 def validate_token(token):
     entry = st.session_state.reset_tokens.get(token)
     if not entry:
-        return False, "Token inválido"
+        return False, "Token inválido."
     if time.time() > entry["expire"]:
         del st.session_state.reset_tokens[token]
-        return False, "Token expirado"
+        return False, "Token expirado."
     return True, entry["username"]
 
 # ----------------------------
@@ -100,53 +98,73 @@ def authenticate(username, password):
     return False, "Senha incorreta."
 
 # ----------------------------
-# UI styling
+# UI styling helpers
 # ----------------------------
 def inject_css():
     st.markdown(
         """
     <style>
-    .login-box { background: #ffffff; padding: 18px; border-radius: 10px; box-shadow: 0 6px 18px rgba(0,0,0,0.12); }
-    .login-title { font-size: 20px; font-weight:700; color:#0b63ce; text-align:center; margin-bottom:8px; }
+    .login-card {
+        background: linear-gradient(180deg, #ffffff 0%, #f6fbff 100%);
+        padding: 20px;
+        border-radius: 12px;
+        box-shadow: 0 10px 30px rgba(15, 40, 90, 0.08);
+    }
+    .login-title { font-size:22px; font-weight:700; color:#0b63ce; text-align:center; margin-bottom:6px; }
+    .login-sub { color:#4b5563; font-size:13px; text-align:center; margin-bottom:12px; }
+    .small-note { font-size:12px; color:#6b7280; }
     </style>
     """,
         unsafe_allow_html=True,
     )
 
 # ----------------------------
-# Dialogs (login / recovery) — no rerun inside
+# Dialogs: LOGIN (with explanation) and Recovery
 # ----------------------------
 @st.dialog("Login")
 def login_dialog():
     inject_css()
-    st.markdown("<div class='login-box'>", unsafe_allow_html=True)
-    st.markdown("<div class='login-title'>REPARA — Login</div>", unsafe_allow_html=True)
+    st.markdown("<div class='login-card'>", unsafe_allow_html=True)
+    st.markdown("<div class='login-title'>REPARA — Entrar</div>", unsafe_allow_html=True)
+    st.markdown("<div class='login-sub'>Plataforma de análise de respostas qualitativas — insights automáticos com IA</div>", unsafe_allow_html=True)
+
+    # compact, clear explanation UI (sucinta)
+    st.markdown("""
+    **Como funciona (em 2 frases):**
+    - Faça upload dos CSVs de *Candidatos* e *Empresas* (colunas com respostas abertas).
+    - Selecione a coluna textual, gere *Wordcloud* inteligente ou peça a *Análise IA* — tudo em Português.
+    """)
+    st.markdown("<hr/>", unsafe_allow_html=True)
 
     user = st.text_input("Usuário", key="login_user")
     pwd = st.text_input("Senha", type="password", key="login_pwd")
 
-    if st.button("Entrar", key="login_btn"):
-        ok, info = authenticate(user, pwd)
-        if ok:
-            st.session_state.logged = True
-            st.session_state.userinfo = info
-            st.session_state.page = "main"
+    col1, col2 = st.columns([1,1])
+    with col1:
+        if st.button("Entrar", key="login_btn"):
+            ok, info = authenticate(user, pwd)
+            if ok:
+                st.session_state.logged = True
+                st.session_state.userinfo = info
+                st.session_state.page = "main"
+                st.session_state._rerun = True
+                st.success("Login bem-sucedido.")
+            else:
+                st.error(info)
+    with col2:
+        if st.button("Esqueci a senha", key="login_forgot"):
+            st.session_state.show_recovery = True
             st.session_state._rerun = True
-            st.success("Login bem-sucedido.")
-        else:
-            st.error(info)
 
-    if st.button("Esqueci a senha", key="login_forgot"):
-        st.session_state.show_recovery = True
-        st.session_state._rerun = True
-
+    st.markdown("<div class='small-note'>Atenção: em produção configure envio de tokens por e-mail. Para testes, o token será mostrado na tela.</div>", unsafe_allow_html=True)
     st.markdown("</div>", unsafe_allow_html=True)
 
 @st.dialog("Recuperação de senha")
 def recovery_dialog():
     inject_css()
-    st.markdown("<div class='login-box'>", unsafe_allow_html=True)
+    st.markdown("<div class='login-card'>", unsafe_allow_html=True)
     st.markdown("<div class='login-title'>Recuperação de senha</div>", unsafe_allow_html=True)
+    st.markdown("<div class='login-sub'>Informe o usuário para gerar token (visível apenas em teste).</div>", unsafe_allow_html=True)
 
     username = st.text_input("Usuário para recuperação", key="rec_user")
     if st.button("Gerar token", key="rec_gen"):
@@ -154,14 +172,14 @@ def recovery_dialog():
             st.error("Usuário não encontrado.")
         else:
             token = generate_token(username)
-            st.success("Token gerado (15 min).")
+            st.success("Token gerado (válido por 15 minutos).")
             st.info(f"Token: `{token}` — em produção envie por e-mail.")
             st.session_state._rerun = True
 
     st.markdown("</div>", unsafe_allow_html=True)
 
 # ----------------------------
-# CSV reading robust (detect delimiter)
+# CSV reader robust
 # ----------------------------
 def read_csv_any(file):
     if file is None:
@@ -203,7 +221,7 @@ def read_csv_any(file):
         return None
 
 # ----------------------------
-# Textual column detection (robust)
+# Detect text columns
 # ----------------------------
 def detect_text_columns(df, min_pct_text=0.10):
     candidates = []
@@ -222,31 +240,28 @@ def detect_text_columns(df, min_pct_text=0.10):
     return candidates
 
 # ----------------------------
-# --- WORDCLOUD INTELLIGENTE (NLTK + heuristics) ---
+# Wordcloud intelligent (NLTK + heuristics)
 # ----------------------------
-# Build stopwords (nltk + custom)
+nltk.download("stopwords", quiet=True)
 STOP_PT = set(stopwords.words("portuguese"))
 CUSTOM_STOP = {
     "sim","não","nao","ok","bom","boa","coisa","coisas","dia","mesmo","mesma",
     "gente","pessoa","pessoas","empresa","empresas","acho","acredito","ser",
     "estar","ter","fazer","feito","vou","vai","ja","já","pois","ainda",
     "sobre","também","tambem","etc","tipo","forma","algo","muito","pouco",
-    "favor","porfavor","obrigado","agradeço","obrigada","ola","oi"
+    "favor","porfavor","obrigado","agradeço","obrigada","ola","oi","ok"
 }
 ALL_STOP = STOP_PT.union(CUSTOM_STOP)
-
 _word_pattern = re.compile(r"[A-Za-zÀ-ÿ0-9\-']{2,}", flags=re.UNICODE)
 
-# Heuristic rules for POS-like classification (lightweight)
-VERB_SUFFIXES = ("ar","er","ir","ando","endo","indo","ado","ido","arão","aram","emos","aram","aria","eria","iria","ava","eva","iva","ou","iu")
-ADJ_SUFFIXES = ("oso","osa","ável","ível","al","ar","ico","ica","ico","ica","nte","ível","oso","osa","ivo","iva")
+VERB_SUFFIXES = ("ar","er","ir","ando","endo","indo","ado","ido","arão","aram","emos","aria","eria","iria","ava","eva","iva","ou","iu")
+ADJ_SUFFIXES = ("oso","osa","ável","ivel","ível","al","ar","ico","ica","nte","ivo","iva")
 NOUN_SUFFIXES = ("ção","ções","dade","ismo","ista","mento","agem","idade","ia","ismo","eza")
 
 def clean_token(t):
     t = unescape(t)
     t = t.lower().strip()
     t = re.sub(r"(^['\"-]+)|(['\"-]+$)", "", t)
-    # remove trailing punctuation
     t = re.sub(r"[^\wÀ-ÿ\-']+", "", t)
     return t
 
@@ -258,45 +273,34 @@ def is_number(s):
         return False
 
 def simple_lemmatize(token):
-    # very simple and safe heuristics (Portuguese)
     t = token
-    # remove common gerundios/ad/idos
     for suf in ("ando","endo","indo","ado","ido","mente"):
-        if t.endswith(suf) and len(t)>len(suf)+3:
+        if t.endswith(suf) and len(t) > len(suf) + 3:
             return t[:-len(suf)]
-    # infinitive endings
     for suf in ("ar","er","ir"):
-        if t.endswith(suf) and len(t)>len(suf)+3:
+        if t.endswith(suf) and len(t) > len(suf) + 3:
             return t[:-len(suf)]
-    # plurals -> singular (ões -> ão / s)
     if t.endswith("ões"):
         return t[:-3] + "ao"
-    if t.endswith("s") and len(t)>4:
+    if t.endswith("s") and len(t) > 4:
         return t[:-1]
     return t
 
 def classify_token(token):
     t = token.lower()
-    # heuristics: prefer verb detection
     if any(t.endswith(suf) for suf in VERB_SUFFIXES):
         return "VERB"
     if any(t.endswith(suf) for suf in ADJ_SUFFIXES):
         return "ADJ"
     if any(t.endswith(suf) for suf in NOUN_SUFFIXES):
         return "NOUN"
-    # fallback heuristics
     if len(t) > 6:
         return "NOUN"
     return "OTHER"
 
 def extract_relevant_words_from_text(text, top_k=None):
-    """
-    Returns list of relevant lemmas emphasizing verbs, adjectives, nouns.
-    top_k: optional cap on number of returned tokens (freq-based)
-    """
     if not isinstance(text, str) or not text.strip():
         return []
-
     tokens = _word_pattern.findall(text)
     cleaned = []
     for tk in tokens:
@@ -310,17 +314,12 @@ def extract_relevant_words_from_text(text, top_k=None):
         if len(tkc) <= 2:
             continue
         cleaned.append(tkc)
-
     if not cleaned:
         return []
-
-    # classify and lemmatize
-    lemmas = []
     weighted = []
     for tk in cleaned:
         cls = classify_token(tk)
         lemma = simple_lemmatize(tk)
-        # weight priority: VERB=3, ADJ=2, NOUN=2, OTHER=1
         weight = 1
         if cls == "VERB":
             weight = 3
@@ -331,17 +330,12 @@ def extract_relevant_words_from_text(text, top_k=None):
         else:
             weight = 0.5
         weighted.append((lemma, weight))
-
-    # accumulate frequencies with weights
     freq = {}
     for lemma, w in weighted:
         freq[lemma] = freq.get(lemma, 0) + w
-
-    # sort by weighted frequency
     items = sorted(freq.items(), key=lambda x: x[1], reverse=True)
     if top_k:
         items = items[:top_k]
-    # return list of lemmas repeated by int(weight) to emphasize in wordcloud
     out = []
     for lemma, score in items:
         repeat = max(1, int(round(score)))
@@ -349,7 +343,7 @@ def extract_relevant_words_from_text(text, top_k=None):
     return out
 
 # ----------------------------
-# Gemini analyze helper (unchanged)
+# Gemini analyse (PT-BR)
 # ----------------------------
 def gemini_analyse(text_list, title="Análise"):
     if not text_list:
@@ -358,19 +352,22 @@ def gemini_analyse(text_list, title="Análise"):
         return "Gemini API key não encontrada em secrets. Configure GOOGLE_API_KEY."
     joined = "\n".join(map(str, text_list))
     prompt = f"""
-You are an experienced data analyst. Produce a concise structured analysis for the text below.
+Você é um analista de dados especializado em textos qualitativos. Responda **sempre em português do Brasil**.
+Realize a análise do conteúdo abaixo e entregue:
 
-Title: {title}
+1) Resumo executivo (1–2 parágrafos)
+2) Principais temas (bullets)
+3) Análise de sentimento (positivo / negativo / misto) com justificativa
+4) Pontos de dor e oportunidades (bullets)
+5) Recomendações práticas e acionáveis
+6) Tabela curta: Tema | Exemplo | Impacto | Ação recomendada
 
-Deliver:
-1) Executive summary (1 short paragraph)
-2) Top themes (bullets)
-3) Sentiment overview
-4) Actionable recommendations
-5) A short table (Theme | Example | Impact | Action)
+Título da análise: {title}
 
-Text:
+Texto:
 {joined}
+
+IMPORTANTE: escreva somente em Português (pt-BR), seja direto e indique ações concretas.
 """
     try:
         model = genai.GenerativeModel("gemini-2.5-flash")
@@ -380,7 +377,7 @@ Text:
         return f"Erro ao chamar Gemini: {e}"
 
 # ----------------------------
-# Chat with Gemini (context preview)
+# Chat helper (context preview)
 # ----------------------------
 def chat_with_gemini_context(df_cand, df_emp):
     st.header("💬 Chat com Gemini — pergunte sobre os dados")
@@ -403,7 +400,7 @@ def chat_with_gemini_context(df_cand, df_emp):
         if "GOOGLE_API_KEY" not in st.secrets:
             st.session_state.chat_history.append({"role":"assistant","text":"Gemini não configurado."})
             st.experimental_rerun()
-        prompt = f"Context:\n{context}\nQuestion: {q}"
+        prompt = f"Contexto:\n{context}\nPergunta: {q}"
         try:
             model = genai.GenerativeModel("gemini-2.5-flash")
             resp = model.generate_content(prompt)
@@ -414,7 +411,7 @@ def chat_with_gemini_context(df_cand, df_emp):
         st.experimental_rerun()
 
 # ----------------------------
-# PDF generation
+# PDF generator
 # ----------------------------
 def generate_pdf_bytes(title, text):
     buffer = io.BytesIO()
@@ -431,7 +428,7 @@ def generate_pdf_bytes(title, text):
     return buffer
 
 # ----------------------------
-# Admin panel UI (TOML generator)
+# Admin UI (TOML generator)
 # ----------------------------
 def admin_panel_ui():
     st.title("🛡️ Painel Admin")
@@ -471,10 +468,10 @@ def dashboard_kpis(df_cand, df_emp):
     c3.metric("Empresas", len(df_emp) if df_emp is not None else "—")
 
 # ----------------------------
-# MAIN APP (integrates wordcloud)
+# Main app (integrates wordcloud theme selector)
 # ----------------------------
 def main_app():
-    st.title("📊 REPARA Analytics — v13.4")
+    st.title("📊 REPARA Analytics — v13.4.1")
 
     st.sidebar.success(f"Usuário: {st.session_state.userinfo.get('name')}")
     if st.sidebar.button("Painel Admin"):
@@ -499,6 +496,12 @@ def main_app():
     df_emp = read_csv_any(emp_file) if emp_file else None
 
     dashboard_kpis(df_cand, df_emp)
+
+    # Wordcloud theme selector (global)
+    st.sidebar.markdown("### 🎨 Wordcloud")
+    wc_theme = st.sidebar.radio("Tema", options=["Light","Dark"], index=0)
+    wc_bg = "white" if wc_theme=="Light" else "#0b1220"
+    wc_max_words = st.sidebar.slider("Max words", min_value=50, max_value=300, value=150, step=25)
 
     tabs = st.tabs(["👤 Candidatos", "🏢 Empresas", "🔀 Cruzada", "💬 Chat IA"])
 
@@ -532,7 +535,7 @@ def main_app():
                 if len(text_joined.strip()) < 10:
                     st.info("Pouco texto nesta coluna — talvez não haja conteúdo para IA/wordcloud.")
                 else:
-                    # Wordcloud intelligent
+                    # wordcloud intelligent action
                     if st.button("Gerar Wordcloud Inteligente"):
                         words = extract_relevant_words_from_text(text_joined, top_k=200)
                         if not words:
@@ -543,12 +546,17 @@ def main_app():
                                 width=900,
                                 height=400,
                                 collocations=False,
-                                background_color="white",
-                                max_words=150
+                                background_color=wc_bg,
+                                max_words=wc_max_words,
+                                prefer_horizontal=0.9,
+                                regexp=None
                             ).generate(cleaned_text)
                             fig, ax = plt.subplots(figsize=(10,4))
-                            ax.imshow(wc)
+                            ax.imshow(wc, interpolation="bilinear")
                             ax.axis("off")
+                            # set white background for dark theme embed
+                            if wc_theme == "Dark":
+                                fig.patch.set_facecolor("#0b1220")
                             st.pyplot(fig)
 
                     if st.button("IA — Analisar candidatos"):
@@ -589,10 +597,12 @@ def main_app():
                     if not words:
                         st.warning("Nenhuma palavra relevante encontrada.")
                     else:
-                        wc = WordCloud(width=900, height=400, collocations=False, background_color="white", max_words=150).generate(" ".join(words))
+                        wc = WordCloud(width=900, height=400, collocations=False, background_color=wc_bg, max_words=wc_max_words).generate(" ".join(words))
                         fig, ax = plt.subplots(figsize=(10,4))
-                        ax.imshow(wc)
+                        ax.imshow(wc, interpolation="bilinear")
                         ax.axis("off")
+                        if wc_theme == "Dark":
+                            fig.patch.set_facecolor("#0b1220")
                         st.pyplot(fig)
 
                 if st.button("IA — Analisar empresas", key="an_emp"):
@@ -648,9 +658,9 @@ def main_app():
     # Reset password footer
     st.markdown("---")
     st.header("🔐 Redefinir senha (se tiver token)")
-    token_val = st.text_input("Token de recuperação", key="reset_token_v134")
-    new_password = st.text_input("Nova senha", type="password", key="reset_new_pw_v134")
-    if st.button("Redefinir senha", key="reset_submit_v134"):
+    token_val = st.text_input("Token de recuperação", key="reset_token_v1341")
+    new_password = st.text_input("Nova senha", type="password", key="reset_new_pw_v1341")
+    if st.button("Redefinir senha", key="reset_submit_v1341"):
         if not token_val:
             st.error("Informe token.")
         else:
@@ -678,6 +688,7 @@ if "show_recovery" not in st.session_state:
 if "_rerun" not in st.session_state:
     st.session_state._rerun = False
 
+# safe rerun outside dialogs
 if st.session_state._rerun:
     st.session_state._rerun = False
     st.rerun()
