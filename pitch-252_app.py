@@ -1,6 +1,8 @@
-# REPARA Analytics — v13.4.1
-# Wordcloud inteligente (NLTK + heuristics), Gemini em PT-BR, login modal com explicação UX
-# Compatível com Streamlit Cloud — sem spaCy
+# REPARA Analytics — v13.5
+# - DEI Specialist system prompt (aplicado a análises e chat)
+# - Nova aba 🔐 Recuperação (token + nova senha)
+# - Wordcloud inteligente sem spaCy (NLTK + heurísticas)
+# - Compatível com Streamlit Cloud
 
 import streamlit as st
 import pandas as pd
@@ -24,7 +26,7 @@ from html import unescape
 # ----------------------------
 st.set_page_config(page_title="Repara Analytics", layout="wide")
 
-# Configure Gemini if key present (safe)
+# Configure Gemini if key present
 if "GOOGLE_API_KEY" in st.secrets:
     try:
         genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
@@ -40,6 +42,27 @@ from nltk.corpus import stopwords
 # ----------------------------
 PWD_CTX = CryptContext(schemes=["pbkdf2_sha256"], deprecated="auto")
 RESET_TOKEN_TTL = 15 * 60
+
+# ----------------------------
+# DEI Specialist System Prompt (applied to analyses + chat)
+# ----------------------------
+DEI_SYSTEM_PROMPT = """
+Você é um especialista em Diversidade, Equidade e Inclusão (DEI) com profundo conhecimento em:
+- Políticas Públicas de Inclusão no Brasil (ex.: Lei Brasileira de Inclusão)
+- Ações afirmativas e práticas de contratação inclusiva
+- Diretrizes da OIT, ONU e ODS sobre inclusão social e trabalho decente
+- Barreiras estruturais (racial, de gênero, etária, territorial, socioeconômica)
+- Boas práticas de acolhimento, requalificação e promoção de oportunidades
+
+Ao analisar respostas de candidatos e informações de empresas, foque em:
+1) identificar barreiras de acesso e formas de exclusão;
+2) detectar sentimentos de invisibilidade, estigma ou exclusão;
+3) priorizar recomendações práticas, alinhadas a políticas públicas e ações internas;
+4) sugerir indicadores acionáveis e medidas de mitigação (ex.: ajustes de recrutamento, programas de capacitação, avaliações por competências, parcerias públicas).
+
+Responda sempre em Português do Brasil (pt-BR), de forma clara, empática e acionável.
+Adapte o tom ao público (RH, gestores e formuladores de políticas).
+"""
 
 # ----------------------------
 # Load users from secrets
@@ -58,7 +81,7 @@ def load_users():
 USERS = load_users()
 
 # ----------------------------
-# Session tokens helpers
+# Token helpers
 # ----------------------------
 def init_tokens():
     if "reset_tokens" not in st.session_state:
@@ -113,27 +136,23 @@ def inject_css():
     .login-title { font-size:22px; font-weight:700; color:#0b63ce; text-align:center; margin-bottom:6px; }
     .login-sub { color:#4b5563; font-size:13px; text-align:center; margin-bottom:12px; }
     .small-note { font-size:12px; color:#6b7280; }
+    .section-title { font-weight:700; color:#0b63ce; margin-bottom:6px; }
     </style>
     """,
         unsafe_allow_html=True,
     )
 
 # ----------------------------
-# Dialogs: LOGIN (with explanation) and Recovery
+# Dialogs: LOGIN and Recovery (no experimental rerun)
 # ----------------------------
 @st.dialog("Login")
 def login_dialog():
     inject_css()
     st.markdown("<div class='login-card'>", unsafe_allow_html=True)
     st.markdown("<div class='login-title'>REPARA — Entrar</div>", unsafe_allow_html=True)
-    st.markdown("<div class='login-sub'>Plataforma de análise de respostas qualitativas — insights automáticos com IA</div>", unsafe_allow_html=True)
+    st.markdown("<div class='login-sub'>Plataforma de análise qualitativa com foco em inclusão e políticas públicas</div>", unsafe_allow_html=True)
 
-    # compact, clear explanation UI (sucinta)
-    st.markdown("""
-    **Como funciona (em 2 frases):**
-    - Faça upload dos CSVs de *Candidatos* e *Empresas* (colunas com respostas abertas).
-    - Selecione a coluna textual, gere *Wordcloud* inteligente ou peça a *Análise IA* — tudo em Português.
-    """)
+    st.markdown("**Como usar (rápido):**\n- Faça upload dos CSVs de `Candidatos` e `Empresas` na barra lateral.\n- Selecione a coluna com respostas abertas e gere *Wordcloud* ou peça *Análise IA* (em PT-BR).")
     st.markdown("<hr/>", unsafe_allow_html=True)
 
     user = st.text_input("Usuário", key="login_user")
@@ -156,26 +175,7 @@ def login_dialog():
             st.session_state.show_recovery = True
             st.session_state._rerun = True
 
-    st.markdown("<div class='small-note'>Atenção: em produção configure envio de tokens por e-mail. Para testes, o token será mostrado na tela.</div>", unsafe_allow_html=True)
-    st.markdown("</div>", unsafe_allow_html=True)
-
-@st.dialog("Recuperação de senha")
-def recovery_dialog():
-    inject_css()
-    st.markdown("<div class='login-card'>", unsafe_allow_html=True)
-    st.markdown("<div class='login-title'>Recuperação de senha</div>", unsafe_allow_html=True)
-    st.markdown("<div class='login-sub'>Informe o usuário para gerar token (visível apenas em teste).</div>", unsafe_allow_html=True)
-
-    username = st.text_input("Usuário para recuperação", key="rec_user")
-    if st.button("Gerar token", key="rec_gen"):
-        if username not in USERS:
-            st.error("Usuário não encontrado.")
-        else:
-            token = generate_token(username)
-            st.success("Token gerado (válido por 15 minutos).")
-            st.info(f"Token: `{token}` — em produção envie por e-mail.")
-            st.session_state._rerun = True
-
+    st.markdown("<div class='small-note'>Nota: em ambiente de produção, a entrega de tokens deve ser feita por e-mail.</div>", unsafe_allow_html=True)
     st.markdown("</div>", unsafe_allow_html=True)
 
 # ----------------------------
@@ -221,7 +221,7 @@ def read_csv_any(file):
         return None
 
 # ----------------------------
-# Detect text columns
+# Detect text columns (robust)
 # ----------------------------
 def detect_text_columns(df, min_pct_text=0.10):
     candidates = []
@@ -343,7 +343,7 @@ def extract_relevant_words_from_text(text, top_k=None):
     return out
 
 # ----------------------------
-# Gemini analyse (PT-BR)
+# Gemini analyse helper (DEI system prompt + PT-BR)
 # ----------------------------
 def gemini_analyse(text_list, title="Análise"):
     if not text_list:
@@ -351,23 +351,23 @@ def gemini_analyse(text_list, title="Análise"):
     if "GOOGLE_API_KEY" not in st.secrets:
         return "Gemini API key não encontrada em secrets. Configure GOOGLE_API_KEY."
     joined = "\n".join(map(str, text_list))
+    # Full prompt: DEI system prompt + task instructions (pt-BR)
     prompt = f"""
-Você é um analista de dados especializado em textos qualitativos. Responda **sempre em português do Brasil**.
-Realize a análise do conteúdo abaixo e entregue:
+{DEI_SYSTEM_PROMPT}
+
+Agora, considerando o título: {title}, execute a análise do texto abaixo e entregue, em Português (pt-BR):
 
 1) Resumo executivo (1–2 parágrafos)
 2) Principais temas (bullets)
 3) Análise de sentimento (positivo / negativo / misto) com justificativa
 4) Pontos de dor e oportunidades (bullets)
-5) Recomendações práticas e acionáveis
-6) Tabela curta: Tema | Exemplo | Impacto | Ação recomendada
-
-Título da análise: {title}
+5) Recomendações práticas, alinhadas a políticas públicas e ações afirmativas
+6) Tabela curta: Tema | Exemplo (trecho do texto) | Impacto | Ação recomendada
 
 Texto:
 {joined}
 
-IMPORTANTE: escreva somente em Português (pt-BR), seja direto e indique ações concretas.
+IMPORTANTE: Responda de forma objetiva, empática e orientada à ação. Indique métricas/indicadores quando possível.
 """
     try:
         model = genai.GenerativeModel("gemini-2.5-flash")
@@ -377,10 +377,10 @@ IMPORTANTE: escreva somente em Português (pt-BR), seja direto e indique ações
         return f"Erro ao chamar Gemini: {e}"
 
 # ----------------------------
-# Chat helper (context preview)
+# Chat with Gemini — uses DEI specialist prompt (since option B)
 # ----------------------------
 def chat_with_gemini_context(df_cand, df_emp):
-    st.header("💬 Chat com Gemini — pergunte sobre os dados")
+    st.header("💬 Chat com Gemini (Especialista DEI)")
     if "chat_history" not in st.session_state:
         st.session_state.chat_history = []
     context = ""
@@ -391,7 +391,7 @@ def chat_with_gemini_context(df_cand, df_emp):
     for msg in st.session_state.chat_history:
         role = "Você" if msg["role"] == "user" else "IA"
         st.markdown(f"**{role}:** {msg['text']}")
-    q = st.text_input("Pergunta sobre os dados", key="chat_q")
+    q = st.text_input("Pergunte ao especialista DEI sobre os dados", key="chat_q")
     if st.button("Enviar pergunta", key="chat_send"):
         if not q.strip():
             st.warning("Escreva algo antes de enviar.")
@@ -400,7 +400,18 @@ def chat_with_gemini_context(df_cand, df_emp):
         if "GOOGLE_API_KEY" not in st.secrets:
             st.session_state.chat_history.append({"role":"assistant","text":"Gemini não configurado."})
             st.experimental_rerun()
-        prompt = f"Contexto:\n{context}\nPergunta: {q}"
+        # Compose prompt with DEI system prompt + context + user question
+        prompt = f"""
+{DEI_SYSTEM_PROMPT}
+
+Contexto:
+{context}
+
+Pergunta do usuário:
+{q}
+
+Responda em Português do Brasil, com foco em recomendações práticas e políticas públicas quando aplicável.
+"""
         try:
             model = genai.GenerativeModel("gemini-2.5-flash")
             resp = model.generate_content(prompt)
@@ -468,10 +479,10 @@ def dashboard_kpis(df_cand, df_emp):
     c3.metric("Empresas", len(df_emp) if df_emp is not None else "—")
 
 # ----------------------------
-# Main app (integrates wordcloud theme selector)
+# Main app (with new '🔐 Recuperação' tab)
 # ----------------------------
 def main_app():
-    st.title("📊 REPARA Analytics — v13.4.1")
+    st.title("📊 REPARA Analytics — v13.5")
 
     st.sidebar.success(f"Usuário: {st.session_state.userinfo.get('name')}")
     if st.sidebar.button("Painel Admin"):
@@ -503,7 +514,7 @@ def main_app():
     wc_bg = "white" if wc_theme=="Light" else "#0b1220"
     wc_max_words = st.sidebar.slider("Max words", min_value=50, max_value=300, value=150, step=25)
 
-    tabs = st.tabs(["👤 Candidatos", "🏢 Empresas", "🔀 Cruzada", "💬 Chat IA"])
+    tabs = st.tabs(["👤 Candidatos", "🏢 Empresas", "🔀 Cruzada", "💬 Chat IA", "🔐 Recuperação"])
 
     # CANDIDATOS
     with tabs[0]:
@@ -548,13 +559,11 @@ def main_app():
                                 collocations=False,
                                 background_color=wc_bg,
                                 max_words=wc_max_words,
-                                prefer_horizontal=0.9,
-                                regexp=None
+                                prefer_horizontal=0.9
                             ).generate(cleaned_text)
                             fig, ax = plt.subplots(figsize=(10,4))
                             ax.imshow(wc, interpolation="bilinear")
                             ax.axis("off")
-                            # set white background for dark theme embed
                             if wc_theme == "Dark":
                                 fig.patch.set_facecolor("#0b1220")
                             st.pyplot(fig)
@@ -647,7 +656,7 @@ def main_app():
             else:
                 st.info("Selecione colunas textuais válidas para cruzar.")
 
-    # CHAT IA
+    # CHAT IA (DEI specialist)
     with tabs[3]:
         chat_with_gemini_context = globals().get("chat_with_gemini_context")
         if callable(chat_with_gemini_context):
@@ -655,23 +664,36 @@ def main_app():
         else:
             st.info("Chat não disponível.")
 
-    # Reset password footer
-    st.markdown("---")
-    st.header("🔐 Redefinir senha (se tiver token)")
-    token_val = st.text_input("Token de recuperação", key="reset_token_v1341")
-    new_password = st.text_input("Nova senha", type="password", key="reset_new_pw_v1341")
-    if st.button("Redefinir senha", key="reset_submit_v1341"):
-        if not token_val:
-            st.error("Informe token.")
-        else:
-            ok, resp = validate_token(token_val)
-            if not ok:
-                st.error(resp)
+    # RECUPERAÇÃO (nova aba)
+    with tabs[4]:
+        st.header("🔐 Recuperação de senha")
+        st.markdown("Se você recebeu um token de recuperação (gerado via modal de recuperação), insira abaixo para redefinir sua senha.")
+        token_val = st.text_input("Token de recuperação", key="recover_token")
+        new_password = st.text_input("Nova senha", type="password", key="recover_new_pw")
+        if st.button("Redefinir senha", key="recover_submit"):
+            if not token_val:
+                st.error("Informe o token.")
             else:
-                username = resp
-                hashed = PWD_CTX.hash(new_password)
-                st.success("Senha atualizada — cole o bloco abaixo no secrets.toml")
-                st.code(f'[users.{username}]\nname = "{USERS[username]["name"]}"\nemail = "{USERS[username]["email"]}"\npassword = "{hashed}"', language="toml")
+                ok, resp = validate_token(token_val)
+                if not ok:
+                    st.error(resp)
+                else:
+                    username = resp
+                    hashed = PWD_CTX.hash(new_password)
+                    st.success("Senha atualizada (local). Copie o bloco abaixo e cole no secrets.toml do Streamlit Cloud:")
+                    st.code(f'[users.{username}]\nname = "{USERS[username]["name"]}"\nemail = "{USERS[username]["email"]}"\npassword = "{hashed}"', language="toml")
+        st.markdown("---")
+        st.markdown("**Gerar token (admin/testes)**")
+        gen_user = st.text_input("Gerar token para usuário (username)", key="gen_token_user")
+        if st.button("Gerar token", key="gen_token_btn"):
+            if not gen_user:
+                st.error("Informe o username.")
+            elif gen_user not in USERS:
+                st.error("Usuário não encontrado.")
+            else:
+                tk = generate_token(gen_user)
+                st.success("Token gerado (visível apenas para testes).")
+                st.info(f"Token para {gen_user}: `{tk}` — válido por 15 minutos.")
 
 # ----------------------------
 # Execution
