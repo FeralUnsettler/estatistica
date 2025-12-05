@@ -64,67 +64,249 @@ Para qualquer coluna textual selecionada:
 ---
 ---
 
-## 🚀 Novidades da versão 13.4.2
-### Streamlit + Gemini + Wordcloud Inteligente + Admin Panel
+Aqui está o **README.md COMPLETO para a versão 13.4.1**, incluindo:
 
-### ✨ Wordcloud Inteligente Dark Mode
-- Fundo escuro premium
-- Temas selecionáveis:
-  - Dark Elegante
-  - Deep Purple
-  - Neon Blue
-  - Gold
-  - Carbon Gray
-
-### ❤️ Sentiment Lexicon PT-BR integrado
-Palavras emocionais agora têm peso extra:
-- positivas → +4
-- negativas → +4
-
-### 🧠 POS Heurística (sem spaCy — compatível com Streamlit Cloud)
-- identifica verbos, adjetivos e substantivos por morfologia
-- lematização leve
-- stopwords PT-BR + customizadas
-- compatível com CSVs reais
-
-### 🤖 Gemini 2.5 Flash
-- análise textual profunda
-- análise cruzada
-- chat contextual
-- geração de PDF automática
-
-### 🔐 Autenticação completa
-- PBKDF2-SHA256
-- painel admin para gerar novos usuários
-- blocos TOML para Streamlit Cloud
+* Wordcloud inteligente com Light/Dark Theme
+* Gemini respondendo **100% em Português do Brasil**
+* Tela de Login com UI elegante + explicação clara
+* Sistema completo de login, recuperação de senha e painel admin
+* Deploy totalmente compatível com Streamlit Cloud
+* Lista completa de requisitos
+* Documentação profissional / pronta para GitHub
 
 ---
 
-## 📦 Estrutura
+# ✨ Novidades da Versão 13.4.1
+
+### 🎨 **1. Wordcloud Inteligente (NLTK + heurísticas + PT-BR)**  
+Totalmente reescrita e agora:
+
+- Filtra *somente palavras relevantes*: verbos, substantivos e adjetivos  
+- Remove ruídos, termos vazios e pronomes  
+- Faz lematização leve  
+- Classifica palavras por relevância e peso  
+- Inclui seletor de **tema Light ou Dark** elegante  
+- 100% compatível com Streamlit Cloud (sem spaCy)
+
+### 💬 **2. IA aprimorada — Responde sempre em Português**  
+O prompt foi reescrito, agora 100% PT-BR:
+
+- Resumo executivo  
+- Temas principais  
+- Análise de sentimentos  
+- Pontos de dor e oportunidades  
+- Recomendações práticas  
+- Tabela “Tema | Exemplo | Impacto | Ação recomendada”  
+
+### 🔐 **3. Tela de Login com UI elegante + explicação simples e clara**  
+Interface redesenhada usando:
+
+- Modal `st.dialog`
+- Cartão visual moderno
+- Explicação minimalista de como a ferramenta funciona
+- Suporte a recuperação de senha com token temporário
+
+### 🛡️ **4. Painel Admin refinado**
+- Geração de hashes PBKDF2-SHA256  
+- Criação de blocos TOML prontos para secrets  
+- Gerenciamento simples e seguro
+
+### 🌗 **5. Wordcloud Theme Switch (Light / Dark)**  
+- Tema "Light": fundo branco profissional  
+- Tema "Dark": fundo #0b1220 elegante, ideal para telões
+
+### 🧩 **6. Refatorações gerais**
+- Remoção total de `experimental_rerun()`  
+- Navegação 100% estável com `session_state._rerun`  
+- Detecção de colunas textuais mais robusta  
+- Compatibilidade total com Streamlit Cloud  
+- Melhorias no Chat IA e no módulo PDF  
+
+---
+
+# 🛠️ Tecnologias Utilizadas
+
+- **Streamlit 1.39+**
+- **Google Gemini 2.5 Flash**
+- **NLTK (stopwords e tokenização leve em PT-BR)**
+- **Passlib (hash PBKDF2-SHA256)**
+- **ReportLab (exportação PDF)**
+- **Matplotlib + Wordcloud**
+- **Pandas**
+
+---
+
+# 📦 Instalação
+
+### **1. Clone o repositório**
+```bash
+git clone https://github.com/seu-user/repara-analytics
+cd repara-analytics
+````
+
+### **2. Instale dependências**
+
+```bash
+pip install -r requirements.txt
+```
+
+### **3. Execute**
+
+```bash
+streamlit run app.py
+```
+
+---
+
+# 🧩 Configuração do `secrets.toml` (Streamlit Cloud)
+
+Crie dentro de `.streamlit/secrets.toml`:
+
+```toml
+GOOGLE_API_KEY = "SUA_CHAVE"
+
+[users.admin]
+name = "Administrador"
+email = "admin@repara.com"
+password = "$pbkdf2-sha256$..."
+
+[users.luciano]
+name = "Luciano Martins"
+email = "luciano@exemplo.com"
+password = "$pbkdf2-sha256$..."
+```
+
+Para gerar hashes:
+
+```python
+from passlib.context import CryptContext
+PWD = CryptContext(schemes=["pbkdf2_sha256"])
+print(PWD.hash("SUA_SENHA"))
+```
+
+---
+
+# 🖥️ Deploy no Streamlit Cloud
+
+1. Faça commit de:
+
+   * `app.py`
+   * `requirements.txt`
+   * `README.md`
+
+2. Acesse: [https://streamlit.io/cloud](https://streamlit.io/cloud)
+
+3. Crie um novo app.
+
+4. Em **Settings → Secrets**, cole seu `secrets.toml`.
+
+5. Rodará automaticamente 🎉
+
+---
+
+# 📁 Estrutura do Projeto
 
 ```
-repara/
-│── app.py
-│── requirements.txt
+📦 repara-analytics
+│
+├── app.py              # aplicação completa v13.4.1
+├── requirements.txt    # dependências para Streamlit Cloud
 └── README.md
-
 ```
 
 ---
 
-## 📥 Dependências (requirements.txt)
+# 🧱 Arquitetura da Aplicação
 
-```
-streamlit
-pandas
-matplotlib
-wordcloud
-google-generativeai
-passlib
-reportlab
-python-dotenv
-nltk
-```
+### 🔐 Autenticação
+
+* Login via modal (`st.dialog`)
+* Tokens temporários
+* Hash PBKDF2-SHA256
+* Painel Admin restrito
+
+### 📥 Processamento CSV
+
+* Autodetector de delimitador
+* Normalizador de colunas
+* Detecção de texto baseada em estatísticas
+* Preparação limpa para IA
+
+### 🎨 Wordcloud Inteligente
+
+* Tokenização PT-BR
+* Stopwords da NLTK + lista customizada
+* Lematização leve
+* Classificação gramatical (verbo / adjetivo / substantivo)
+* Tema Light / Dark
+* Renderização elegante
+
+### 🤖 IA (Gemini 2.5 Flash)
+
+* Prompt 100% português
+* Relatórios estruturados
+* Exportação PDF
+
+### 🔀 Cruzada
+
+* Junta textos de candidatos e empresas
+* IA gera visão integrada
+* PDF
+
+### 💬 Chat IA
+
+* Contexto automático dos CSVs
+* Histórico persistente
+
+---
+
+# 📊 KPIs
+
+* Contagem de candidatos
+* Contagem de empresas
+* Colunas textuais detectadas
+* Preview dos CSVs
+
+---
+
+# 📄 Exportação PDF
+
+Relatórios profissionais gerados com:
+
+* Títulos padronizados
+* Conteúdo rico
+* Download instantâneo
+
+---
+
+# 🔒 Segurança
+
+* Senhas nunca armazenadas em texto puro
+* Hash PBKDF2-SHA256
+* Reset de senha via token
+* Segredos isolados no `secrets.toml`
+* IA recebe apenas o mínimo necessário
+
+---
+
+# 🧭 Roadmap Futuro (13.5+)
+
+* [ ] Tema escuro completo no app
+* [ ] Dashboard com Plotly
+* [ ] Agrupamento temático automático (clustering)
+* [ ] Exportação consolidada Excel
+* [ ] Múltiplos perfis (Analista / Gestor / Admin)
+* [ ] Integração Supabase
+
+---
+
+# 👥 Equipe
+
+**Desenvolvido por:**
+Luciano Martins Fagundes
+
+**Assistente técnico:**
+ChatGPT — Build Assist Pro (2025)
 
 ---
 ---
