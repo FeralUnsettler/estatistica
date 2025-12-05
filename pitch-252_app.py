@@ -1,6 +1,6 @@
 # ===============================================================
-#  REPARA ANALYTICS — V13.4.4 SM (Super Minimal)
-#  100% compatível com Streamlit Cloud
+#  REPARA ANALYTICS — V13.4.2
+#  Streamlit + Gemini + Auth + Admin + Wordcloud Inteligente
 # ===============================================================
 
 import streamlit as st
@@ -19,22 +19,17 @@ from nltk.corpus import stopwords
 
 nltk.download("stopwords", quiet=True)
 
-
-# =====================================================
-# PASSWORD HASHING
-# =====================================================
+# -------------------- AUTH --------------------
 pwd_context = CryptContext(schemes=["pbkdf2_sha256"], deprecated="auto")
 
 def verify_password(plain, hashed):
     try:
         return pwd_context.verify(plain, hashed)
-    except:
+    except Exception:
         return False
 
 
-# =====================================================
-# GOOGLE GEMINI CONFIG
-# =====================================================
+# -------------------- CONFIG AI --------------------
 if "GOOGLE_API_KEY" in st.secrets:
     genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
     model = genai.GenerativeModel("gemini-1.5-flash")
@@ -43,98 +38,139 @@ else:
 
 
 # =====================================================
-# SENTIMENT LEXICON
+#  SENTIMENT LEXICON PT-BR
 # =====================================================
-POSITIVE = {
-    "bom","ótimo","excelente","feliz","positivo","organizado",
-    "eficiente","tranquilo","justo","acolhedor"
+SENTIMENT_POS = {
+    "bom","ótimo","excelente","maravilhoso","feliz","satisfeito",
+    "positivo","positiva","tranquilo","gostei","amo","adoro",
+    "eficiente","competente","justo","melhor","acolhedor"
 }
 
-NEGATIVE = {
-    "ruim","péssimo","negativo","difícil","injusto","horrível",
-    "ansioso","demorado","desafio","problema"
+SENTIMENT_NEG = {
+    "ruim","péssimo","triste","demorado","negativo","negativa",
+    "difícil","injusto","perigoso","preocupado","ansioso",
+    "fraco","insuportável","horrível","problema","desafio"
 }
 
 
 # =====================================================
-# WORD PROCESSING
+#  TOKEN CLEANING + POS CLASSIFIER (light)
 # =====================================================
 STOP_PT = set(stopwords.words("portuguese"))
 CUSTOM_STOP = {
     "sim","não","nao","ok","bom","boa","coisa","coisas","dia",
     "gente","pessoa","pessoas","empresa","empresas","acho",
-    "ser","estar","ter","fazer","vou","vai","já","ja","pois"
+    "acredito","ser","estar","ter","fazer","feito","vou","vai",
+    "já","ja","pois","sobre","ainda","muito","pouco","tudo"
 }
-STOP_ALL = STOP_PT.union(CUSTOM_STOP)
+ALL_STOP = STOP_PT.union(CUSTOM_STOP)
 
-pattern = re.compile(r"[A-Za-zÀ-ÿ]+")
+_word_pattern = re.compile(r"[A-Za-zÀ-ÿ]+")
 
 def clean_token(t):
     return re.sub(r"[^A-Za-zÀ-ÿ]", "", t.lower()).strip()
 
-def classify(word):
+def is_number(word):
+    return bool(re.fullmatch(r"\d+|\d+\.\d+", word))
+
+def classify_token(word):
     if word.endswith(("ar","er","ir")):
         return "VERB"
-    if word.endswith(("dade","ção","são","mento","agem")):
+    if word.endswith(("dade","ção","são","mento","idade","tude")):
         return "NOUN"
-    if word.endswith(("vel","iva","ivo","oso","osa")):
+    if word.endswith(("vel","iva","ivo","oso","osa","ante","ente")):
         return "ADJ"
     return "OTHER"
 
-def weight_sentiment(w):
-    if w in POSITIVE: return 4
-    if w in NEGATIVE: return 4
+def simple_lemmatize(word):
+    lemmas = {
+        "trabalhando":"trabalhar","estudando":"estudar",
+        "melhorando":"melhorar","precisando":"precisar",
+        "buscando":"buscar","aprendendo":"aprender",
+        "vivendo":"viver","tentando":"tentar"
+    }
+    if word in lemmas:
+        return lemmas[word]
+
+    for suf in ("ando","endo","indo"):
+        if word.endswith(suf):
+            return word[:-4]
+    return word
+
+
+# =====================================================
+#  WORDCLOUD INTELIGENTE
+# =====================================================
+def sentiment_weight(t):
+    if t in SENTIMENT_POS:
+        return 4
+    if t in SENTIMENT_NEG:
+        return 4
     return 0
 
-def extract_words(text):
+def extract_relevant_words_from_text(text):
     if not isinstance(text, str):
         return []
-    raw = pattern.findall(text)
-    words = []
 
-    for t in raw:
-        t2 = clean_token(t)
-        if len(t2) <= 2: continue
-        if t2 in STOP_ALL: continue
-        words.append(t2)
+    raw = _word_pattern.findall(text)
+    cleaned = []
 
-    weighted = {}
-    for w in words:
-        base_weight = {
-            "VERB":3,
-            "ADJ":2,
-            "NOUN":2,
-            "OTHER":1
-        }.get(classify(w),1)
+    for tk in raw:
+        tk2 = clean_token(tk)
+        if not tk2 or tk2 in ALL_STOP or is_number(tk2):
+            continue
+        if len(tk2) <= 2:
+            continue
+        cleaned.append(tk2)
 
-        total = base_weight + weight_sentiment(w)
-        weighted[w] = weighted.get(w,0) + total
+    weighted_list = []
+    for tk in cleaned:
+        cls = classify_token(tk)
+        lemma = simple_lemmatize(tk)
+        
+        pos_weight = {
+            "VERB": 3,
+            "ADJ": 2,
+            "NOUN": 2,
+            "OTHER": 0.5
+        }.get(cls,1)
 
-    final = []
-    for w,score in weighted.items():
-        final.extend([w]*max(1,int(score)))
+        e_weight = sentiment_weight(lemma)
+        total = pos_weight + e_weight
+        weighted_list.append((lemma, total))
 
-    return final
+    freq = {}
+    for lemma, w in weighted_list:
+        freq[lemma] = freq.get(lemma, 0) + w
+
+    final_words = []
+    for lemma, score in freq.items():
+        final_words.extend([lemma] * max(1, int(score)))
+
+    return final_words
 
 
-def generate_wordcloud(words, theme="Dark"):
-    THEMES = {
-        "Dark": ("black","viridis"),
-        "Deep Purple": ("#0d001f","plasma"),
-        "Neon Blue": ("#00111e","cool"),
-        "Gold": ("black","cividis"),
-        "Carbon": ("#1a1a1a","magma")
+def generate_wordcloud(words, theme="dark"):
+    text = " ".join(words)
+
+    themes = {
+        "Dark Elegante": ("black", "viridis"),
+        "Deep Purple": ("#0d001f", "plasma"),
+        "Neon Blue": ("#00111e", "cool"),
+        "Gold": ("black", "cividis"),
+        "Carbon Gray": ("#1a1a1a", "magma")
     }
 
-    bg, cmap = THEMES.get(theme, ("black","viridis"))
+    bg, cmap = themes.get(theme, ("black", "viridis"))
 
     wc = WordCloud(
-        width=900, height=450,
+        width=1000,
+        height=500,
         background_color=bg,
         colormap=cmap,
         collocations=False,
         max_words=150
-    ).generate(" ".join(words))
+    ).generate(text)
 
     fig, ax = plt.subplots(figsize=(12,6))
     ax.imshow(wc)
@@ -143,7 +179,7 @@ def generate_wordcloud(words, theme="Dark"):
 
 
 # =====================================================
-# LOAD CSV ROBUSTO
+#  CSV LOADER
 # =====================================================
 def load_csv(file):
     try:
@@ -156,26 +192,32 @@ def load_csv(file):
 
 
 # =====================================================
-# AI ANALYSIS
+#  AI FUNCTIONS
 # =====================================================
-def ai_analyze(df, col):
-    text = "\n".join(df[col].dropna().astype(str))
+def ai_analyze(df, column_name):
+    text = "\n".join(df[column_name].dropna().astype(str).tolist()[:200])
 
     prompt = f"""
-Analise profundamente as respostas a seguir.
-Identifique temas, sentimentos e oportunidades.
+    Analise profundamente as respostas abaixo (português).
+    Identifique:
+    - temas principais
+    - sentimentos
+    - oportunidades
+    - ações recomendadas
+    - resumo final
 
-Texto:
-{text}
-"""
+    Texto analisado:
+    {text}
+    """
 
-    return model.generate_content(prompt).text
+    response = model.generate_content(prompt)
+    return response.text
 
 
 # =====================================================
-# PDF
+#  PDF Export
 # =====================================================
-def make_pdf(text):
+def create_pdf(text):
     buf = io.BytesIO()
     doc = SimpleDocTemplate(buf, pagesize=letter)
     styles = getSampleStyleSheet()
@@ -186,129 +228,149 @@ def make_pdf(text):
 
 
 # =====================================================
-# LOGIN MODAL
+#  LOGIN
 # =====================================================
-def open_login_modal():
-    with st.modal("Login"):
+def login_dialog():
+    with st.dialog("Login"):
         email = st.text_input("Email")
         password = st.text_input("Senha", type="password")
 
         if st.button("Entrar"):
-            for u, data in st.secrets["users"].items():
-                if email == data["email"]:
+            for user, data in st.secrets["users"].items():
+                if data["email"] == email:
                     if verify_password(password, data["password"]):
                         st.session_state.logged = True
-                        st.session_state.user = email
-                        st.session_state._rerun = True
-                        return
+                        st.session_state.user = data["email"]
+                        st.rerun()
                     else:
-                        st.error("Senha incorreta")
+                        st.error("Senha incorreta.")
                         return
-            st.error("Usuário não encontrado")
-
-
-def open_recovery_modal():
-    with st.modal("Recuperar Senha"):
-        st.info("Contate o administrador para redefinir sua senha.")
+            st.error("Usuário não encontrado.")
 
 
 # =====================================================
-# ADMIN PANEL
+#  ADMIN PANEL
 # =====================================================
 def admin_panel():
     st.header("Painel Admin")
 
-    new_email = st.text_input("Novo email")
-    new_name  = st.text_input("Nome")
-    new_pass  = st.text_input("Senha")
-
+    new_email = st.text_input("Email do novo usuário")
+    new_name = st.text_input("Nome")
+    new_pass = st.text_input("Senha")
+    
     if st.button("Gerar Hash"):
-        h = pwd_context.hash(new_pass)
+        hashv = pwd_context.hash(new_pass)
         st.code(f"""
 [users.{new_email.split('@')[0]}]
 name = "{new_name}"
 email = "{new_email}"
-password = "{h}"
+password = "{hashv}"
 """)
+
+    st.info("Cole o bloco acima no secrets.toml")
 
 
 # =====================================================
-# MAIN APP
+#  MAIN APP
 # =====================================================
 def main_app():
 
-    st.title("📊 REPARA Analytics — 13.4.4 SM")
+    st.title("📊 REPARA Analytics v13.4.2")
 
     menu = st.sidebar.radio(
         "Menu",
-        ["📥 Candidatos", "🏢 Empresas", "🤖 IA Chat", "🛠 Admin"]
+        ["📥 Candidatos", "🏢 Empresas", "🔀 Cruzada", "🤖 Chat IA", "🛠 Admin"]
     )
-
-    uploaded = st.sidebar.file_uploader("Envie seu CSV", type="csv")
 
     if menu == "🛠 Admin":
         if st.session_state.user != "admin@repara.com":
-            st.error("Acesso restrito")
+            st.error("Acesso restrito.")
             return
         admin_panel()
         return
 
+    uploaded = st.sidebar.file_uploader("Upload CSV", type=["csv"])
+
     if not uploaded:
-        st.info("Envie um CSV para começar.")
+        st.info("Envie um arquivo CSV para começar.")
         return
 
     df = load_csv(uploaded)
-    st.subheader("Preview dos Dados")
+    st.subheader("Preview")
     st.dataframe(df.head())
 
-    text_cols = [
+    # detectar colunas textuais
+    cols_text = [
         c for c in df.columns
-        if df[c].astype(str).str.contains(r"[A-Za-zÀ-ÿ]").mean() > 0.15
+        if df[c].dtype == object or df[c].astype(str).str.contains(r"[A-Za-zÀ-ÿ]").mean() > 0.2
     ]
 
-    if not text_cols:
-        st.warning("Nenhuma coluna textual encontrada.")
-        return
+    if menu in ["📥 Candidatos", "🏢 Empresas"]:
 
-    col = st.selectbox("Escolha a coluna", text_cols)
+        st.subheader("Selecione uma coluna textual:")
+        col_sel = st.selectbox("Coluna", cols_text)
 
-    st.subheader("Tema do Wordcloud")
-    theme = st.selectbox("Tema", ["Dark","Deep Purple","Neon Blue","Gold","Carbon","Carbon Gray"])
+        st.subheader("Tema do Wordcloud")
+        theme = st.selectbox("Tema", ["Dark Elegante","Deep Purple","Neon Blue","Gold","Carbon Gray"])
 
-    text_all = " ".join(df[col].dropna().astype(str))
-    words = extract_words(text_all)
-    fig = generate_wordcloud(words, theme)
-    st.pyplot(fig)
+        st.subheader("Wordcloud Inteligente")
+        all_text = " ".join(df[col_sel].dropna().astype(str).tolist())
+        
+        words = extract_relevant_words_from_text(all_text)
+        fig = generate_wordcloud(words, theme=theme)
+        st.pyplot(fig)
 
-    if st.button("Análise com IA"):
-        result = ai_analyze(df, col)
-        st.write(result)
+        if st.button("Análise com IA"):
+            result = ai_analyze(df, col_sel)
+            st.subheader("💡 Insight IA")
+            st.write(result)
 
-        pdf = make_pdf(result)
-        st.download_button("Baixar PDF", pdf, "analise.pdf")
+            pdf_data = create_pdf(result)
+            st.download_button("Baixar PDF", pdf_data, "analise.pdf")
+
+    elif menu == "🔀 Cruzada":
+        st.subheader("Escolha as colunas de comparação")
+
+        colA = st.selectbox("Coluna Candidatos", cols_text)
+        colB = st.selectbox("Coluna Empresas", cols_text)
+
+        if st.button("Análise Cruzada IA"):
+            tA = "\n".join(df[colA].dropna().astype(str).tolist()[:100])
+            tB = "\n".join(df[colB].dropna().astype(str).tolist()[:100])
+
+            prompt = f"""
+Compare temas, sentimentos e oportunidades entre:
+
+Candidatos:
+{tA}
+
+Empresas:
+{tB}
+"""
+            result = model.generate_content(prompt).text
+            st.write(result)
+
+    elif menu == "🤖 Chat IA":
+        st.subheader("Chat sobre os dados")
+        user_msg = st.text_area("Pergunte algo:")
+
+        if st.button("Enviar"):
+            preview = df.head().to_csv(index=False)
+            prompt = f"""
+Você é um analista de dados.
+Use este preview para responder:
+
+{preview}
+
+Pergunta: {user_msg}
+"""
+            st.write(model.generate_content(prompt).text)
 
 
 # =====================================================
-# APP FLOW
+#  BOOTSTRAP
 # =====================================================
 if "logged" not in st.session_state:
-    st.session_state.logged = False
-    st.session_state.show_recovery = False
-
-if not st.session_state.logged:
-    st.button("Entrar", on_click=open_login_modal)
-    st.button("Esqueci a senha", on_click=lambda: st.session_state.__setitem__("show_recovery", True))
-
-    if st.session_state.show_recovery:
-        open_recovery_modal()
-
+    login_dialog()
 else:
     main_app()
-
-
-# =====================================================
-# RERUN HANDLER
-# =====================================================
-if st.session_state.get("_rerun"):
-    st.session_state._rerun = False
-    st.rerun()
