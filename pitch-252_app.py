@@ -423,7 +423,7 @@ def landing_page():
         st.markdown('<div class="card">', unsafe_allow_html=True)
         # logo (local file)
         try:
-            st.image("logo.png", width=220)
+            st.image("logo.png", width=600)
         except Exception:
             st.markdown("**MindVision®**")
         st.markdown('<div class="title">MindVision — REPARA Analytics</div>', unsafe_allow_html=True)
