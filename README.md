@@ -75,6 +75,280 @@ Aqui está o **README.md COMPLETO para a versão 13.4.1**, incluindo:
 * Documentação profissional / pronta para GitHub
 
 ---
+---
+
+
+# 🚀 **O que há de novo na versão 13.5.1**
+
+A versão **13.5.1** é a mais estável e refinada até agora — com grandes melhorias na interface, segurança e experiência do usuário.
+
+---
+
+## 🆕 **Novidades & Alterações da v13.5.1**
+
+### **1️⃣ Remoção total do `st.experimental_rerun()` dentro de diálogos**
+
+Problema recorrente que quebrava o app:
+
+```
+st.experimental_rerun() inside st.dialog → ERRO
+```
+
+**Correções implementadas:**
+
+* Introdução de flags internas:
+
+  * `st.session_state._rerun`
+  * `st.session_state._chat_rerun`
+* Rerun seguro ocorre **no fim do app**, nunca dentro de diálogos ou callbacks.
+* Chat IA agora funciona **sem travar**.
+
+---
+
+### **2️⃣ Modelo de IA especializado em DEI (Diversidade, Equidade e Inclusão)**
+
+Agora todas as análises seguem um **super prompt mestre DEI**, alinhado a:
+
+* ONU
+* ODS
+* Políticas Públicas do Brasil
+* Ações afirmativas
+* OIT
+* Barreiras estruturais (racial, gênero, etária, territorial, socioeconômica)
+
+A IA sempre responde em **português do Brasil**, com recomendações práticas e sensíveis.
+
+**Impactos diretos:**
+
+* Insights mais humanos
+* Menos vieses
+* Análises contextualizadas ao Brasil
+* Respostas totalmente PT-BR (corrigido)
+
+---
+
+### **3️⃣ Wordcloud Inteligente 2.0**
+
+Sem SpaCy → totalmente compatível com Streamlit Cloud.
+
+📌 **Vantagens:**
+
+* Extração inteligente de:
+
+  * **Verbros** (peso 3)
+  * **Adjetivos** (peso 2)
+  * **Substantivos** (peso 2)
+* Lematização simples (português)
+* Remoção de números, ruídos e palavras inúteis
+* Stopwords enriquecidas
+* Tokenização robusta
+
+📌 **Novidades da v13.5.1**
+
+* Seletor de tema **Light / Dark**
+* Fundo e estética aprimorados
+* Wordcloud muito mais limpo e relevante
+
+---
+
+### **4️⃣ Nova ABA: 🔐 Recuperação de Senha**
+
+Agora o fluxo está completo:
+
+#### ➤ **Gerar Token (admin)**
+
+* Cria tokens válidos por 15 minutos
+* Ideal para suporte e fluxo de produção
+
+#### ➤ **Redefinir Senha**
+
+* Usuário insere token
+* Cria nova senha
+* Gera bloco TOML pronto para colar em `secrets.toml`
+
+---
+
+### **5️⃣ Login atualizado com UI elegante**
+
+* Card visual com gradient sutil
+* Explicação da ferramenta
+* Texto orientativo claro
+* Botão de recuperação redireciona corretamente para a nova aba
+* Sem reruns inesperados
+
+---
+
+### **6️⃣ Chat IA completamente reestruturado**
+
+* Não utiliza mais `experimental_rerun()` (causava crash)
+* Usa rerun seguro via flag
+* Histórico persistente e organizado
+* Todas as respostas seguem o **modo DEI especialista**
+
+---
+
+### **7️⃣ Detecção de colunas textuais aprimorada**
+
+Nova heurística utilizando:
+
+* % de linhas com texto
+* tamanho médio
+* variedade de termos
+* score combinado
+
+Agora o app:
+
+* detecta mais corretamente colunas relevantes
+* evita falsos positivos
+* funciona mesmo com CSVs "sujos"
+
+---
+
+### **8️⃣ Painel Admin aprimorado**
+
+* Interface mais clara
+* Geração de usuários TOML mais intuitiva
+* Geração de hashes isolados
+
+---
+
+### **9️⃣ Código mais estável e seguro**
+
+* Revisão completa das chamadas de rerenderização
+* Tratamento de CSVs mais robusto
+* Remoção de retornos inesperados nos fluxos de lógica
+* Melhorias de performance no Wordcloud
+
+---
+
+# ⚙️ Como Rodar Localmente
+
+### **1. Crie um ambiente virtual**
+
+```
+python -m venv venv
+source venv/bin/activate  # Linux/Mac
+venv\Scripts\activate     # Windows
+```
+
+### **2. Instale as dependências**
+
+```
+pip install -r requirements.txt
+```
+
+### **3. Adicione suas credenciais**
+
+No arquivo:
+
+```
+.streamlit/secrets.toml
+```
+
+Exemplo:
+
+```toml
+GOOGLE_API_KEY = "sua_chave"
+
+[users.admin]
+name = "Administrador"
+email = "admin@repara.com"
+password = "HASH..."
+```
+
+### **4. Rode o app**
+
+```
+streamlit run app.py
+```
+
+---
+
+# 📁 Estrutura do Projeto
+
+```
+📦 repara-analytics
+ ┣ 📂 .streamlit
+ ┃ ┗ 📜 secrets.toml
+ ┣ 📜 requirements.txt
+ ┣ 📜 app.py
+ ┗ 📜 README.md
+```
+
+---
+
+# 🧠 Funcionalidades Principais
+
+### **✔ Upload de CSVs (Candidatos / Empresas)**
+
+Leitura robusta (`,`, `;`, `|`, `\t`)
+
+### **✔ Wordcloud Inteligente**
+
+Focado em verbos, adjetivos e substantivos.
+
+### **✔ Análise IA (DEI Specialist)**
+
+* Candidatos
+* Empresas
+* Cruzada
+* Todos geram PDF
+
+### **✔ Chat IA com contexto**
+
+Memória do chat + dados dos CSVs incluídos no prompt.
+
+### **✔ KPIs automáticos**
+
+### **✔ Login seguro**
+
+Criptografia PBKDF2-SHA256
+
+### **✔ Recuperação de senha com tokens**
+
+### **✔ Painel Admin**
+
+---
+
+# 📦 Deploy no Streamlit Cloud
+
+Basta publicar o repositório e incluir:
+
+* `requirements.txt`
+* `secrets.toml`
+
+Tudo 100% compatível.
+
+---
+
+# 🤝 Contribuições
+
+Sinta-se livre para sugerir melhorias UI/UX, novas análises ou integrações.
+
+---
+
+# 🏁 Final
+
+A versão **13.5.1** entrega:
+
+* mais estabilidade
+* mais segurança
+* mais inteligência
+* mais acessibilidade
+* mais contexto social aplicado
+
+Se quiser, posso gerar também:
+
+✅ **um changelog detalhado**
+✅ **um diagrama da arquitetura**
+✅ **uma apresentação do projeto (PDF / PPTX)**
+✅ **versão 13.6 com novos ajustes**
+
+Quer que eu gere?
+
+
+---
+---
 
 # ✨ Novidades da Versão 13.4.1
 
