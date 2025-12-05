@@ -1,332 +1,376 @@
+# ===============================================================
+#  REPARA ANALYTICS — V13.4.2
+#  Streamlit + Gemini + Auth + Admin + Wordcloud Inteligente
+# ===============================================================
+
 import streamlit as st
 import pandas as pd
-import numpy as np
-import base64
-import io
-from wordcloud import WordCloud
 import matplotlib.pyplot as plt
-import matplotlib
-matplotlib.use("Agg")
+from wordcloud import WordCloud
+import re
+import io
 from passlib.context import CryptContext
-import google.generativeai as genai
 from reportlab.platypus import SimpleDocTemplate, Paragraph
+from reportlab.lib.pagesizes import letter
 from reportlab.lib.styles import getSampleStyleSheet
-import chardet
+import google.generativeai as genai
+import nltk
+from nltk.corpus import stopwords
 
-# ------------------------
-# CONFIGURAÇÃO INICIAL
-# ------------------------
-st.set_page_config(
-    page_title="MindVision Analytics - REPARA",
-    layout="wide",
-)
+nltk.download("stopwords", quiet=True)
 
-pwd_context = CryptContext(schemes=["pbkdf2_sha256"])
+# -------------------- AUTH --------------------
+pwd_context = CryptContext(schemes=["pbkdf2_sha256"], deprecated="auto")
 
-
-# ------------------------
-# Função: Carregar Logo via Base64 do secrets
-# ------------------------
-def load_logo_from_base64():
+def verify_password(plain, hashed):
     try:
-        logo_b64 = st.secrets.get("logo_base64", None)
-        if not logo_b64:
-            return None
-        bytes_data = base64.b64decode(logo_b64)
-        return io.BytesIO(bytes_data)
-    except:
-        return None
+        return pwd_context.verify(plain, hashed)
+    except Exception:
+        return False
 
 
-# ------------------------
-# Função: Login Check
-# ------------------------
-def verify_user(email, password):
-    users = st.secrets.get("users", {})
-    for _, data in users.items():
-        if data.get("email") == email:
-            hashed = data.get("password")
-            if pwd_context.verify(password, hashed):
-                return data.get("name")
-    return None
+# -------------------- CONFIG AI --------------------
+if "GOOGLE_API_KEY" in st.secrets:
+    genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
+    model = genai.GenerativeModel("gemini-1.5-flash")
+else:
+    model = None
 
 
-# ------------------------
-# Mini Lexicon emocional
-# ------------------------
-emotion_words = {
-    "excelente": 2, "ótimo": 2, "bom": 1, "positivo": 1,
-    "feliz": 2, "alegre": 2, "motivador": 2, "engajado": 2,
-    "ruim": -1, "péssimo": -2, "triste": -2, "negativo": -1,
-    "ansioso": -1, "estressado": -1
+# =====================================================
+#  SENTIMENT LEXICON PT-BR
+# =====================================================
+SENTIMENT_POS = {
+    "bom","ótimo","excelente","maravilhoso","feliz","satisfeito",
+    "positivo","positiva","tranquilo","gostei","amo","adoro",
+    "eficiente","competente","justo","melhor","acolhedor"
+}
+
+SENTIMENT_NEG = {
+    "ruim","péssimo","triste","demorado","negativo","negativa",
+    "difícil","injusto","perigoso","preocupado","ansioso",
+    "fraco","insuportável","horrível","problema","desafio"
 }
 
 
-# ------------------------
-# Limpeza e Wordcloud
-# ------------------------
-def preprocess_text(text):
-    if pd.isna(text):
-        return ""
+# =====================================================
+#  TOKEN CLEANING + POS CLASSIFIER (light)
+# =====================================================
+STOP_PT = set(stopwords.words("portuguese"))
+CUSTOM_STOP = {
+    "sim","não","nao","ok","bom","boa","coisa","coisas","dia",
+    "gente","pessoa","pessoas","empresa","empresas","acho",
+    "acredito","ser","estar","ter","fazer","feito","vou","vai",
+    "já","ja","pois","sobre","ainda","muito","pouco","tudo"
+}
+ALL_STOP = STOP_PT.union(CUSTOM_STOP)
 
-    text = str(text).lower()
+_word_pattern = re.compile(r"[A-Za-zÀ-ÿ]+")
 
-    stopwords = set([
-        "de","da","do","das","dos","a","o","e","é","que","com","em","um",
-        "uma","por","para","se","na","no","nas","nos","..."  # (curtos irrelevantes)
-    ])
+def clean_token(t):
+    return re.sub(r"[^A-Za-zÀ-ÿ]", "", t.lower()).strip()
 
-    tokens = []
-    for w in text.split():
-        w = w.strip(".,!?;:()[]{}\"'")
-        if not w:
+def is_number(word):
+    return bool(re.fullmatch(r"\d+|\d+\.\d+", word))
+
+def classify_token(word):
+    if word.endswith(("ar","er","ir")):
+        return "VERB"
+    if word.endswith(("dade","ção","são","mento","idade","tude")):
+        return "NOUN"
+    if word.endswith(("vel","iva","ivo","oso","osa","ante","ente")):
+        return "ADJ"
+    return "OTHER"
+
+def simple_lemmatize(word):
+    lemmas = {
+        "trabalhando":"trabalhar","estudando":"estudar",
+        "melhorando":"melhorar","precisando":"precisar",
+        "buscando":"buscar","aprendendo":"aprender",
+        "vivendo":"viver","tentando":"tentar"
+    }
+    if word in lemmas:
+        return lemmas[word]
+
+    for suf in ("ando","endo","indo"):
+        if word.endswith(suf):
+            return word[:-4]
+    return word
+
+
+# =====================================================
+#  WORDCLOUD INTELIGENTE
+# =====================================================
+def sentiment_weight(t):
+    if t in SENTIMENT_POS:
+        return 4
+    if t in SENTIMENT_NEG:
+        return 4
+    return 0
+
+def extract_relevant_words_from_text(text):
+    if not isinstance(text, str):
+        return []
+
+    raw = _word_pattern.findall(text)
+    cleaned = []
+
+    for tk in raw:
+        tk2 = clean_token(tk)
+        if not tk2 or tk2 in ALL_STOP or is_number(tk2):
             continue
-
-        # Se for uma emoção → aumenta peso
-        if w in emotion_words:
-            tokens.extend([w] * abs(emotion_words[w]))
+        if len(tk2) <= 2:
             continue
+        cleaned.append(tk2)
 
-        # Aceitar verbos, adjetivos e substantivos (heurística leve)
-        if len(w) > 3 and w not in stopwords:
-            tokens.append(w)
+    weighted_list = []
+    for tk in cleaned:
+        cls = classify_token(tk)
+        lemma = simple_lemmatize(tk)
+        
+        pos_weight = {
+            "VERB": 3,
+            "ADJ": 2,
+            "NOUN": 2,
+            "OTHER": 0.5
+        }.get(cls,1)
 
-    return " ".join(tokens)
+        e_weight = sentiment_weight(lemma)
+        total = pos_weight + e_weight
+        weighted_list.append((lemma, total))
+
+    freq = {}
+    for lemma, w in weighted_list:
+        freq[lemma] = freq.get(lemma, 0) + w
+
+    final_words = []
+    for lemma, score in freq.items():
+        final_words.extend([lemma] * max(1, int(score)))
+
+    return final_words
 
 
-def generate_wordcloud(text, title="Wordcloud"):
-    if not str(text).strip():
-        st.info("Nenhum conteúdo para gerar nuvem de palavras.")
-        return
+def generate_wordcloud(words, theme="dark"):
+    text = " ".join(words)
+
+    themes = {
+        "Dark Elegante": ("black", "viridis"),
+        "Deep Purple": ("#0d001f", "plasma"),
+        "Neon Blue": ("#00111e", "cool"),
+        "Gold": ("black", "cividis"),
+        "Carbon Gray": ("#1a1a1a", "magma")
+    }
+
+    bg, cmap = themes.get(theme, ("black", "viridis"))
 
     wc = WordCloud(
-        width=1200,
+        width=1000,
         height=500,
-        background_color="black",
-        colormap="inferno"
+        background_color=bg,
+        colormap=cmap,
+        collocations=False,
+        max_words=150
     ).generate(text)
 
-    fig, ax = plt.subplots(figsize=(12, 5))
-    ax.imshow(wc, interpolation="bilinear")
+    fig, ax = plt.subplots(figsize=(12,6))
+    ax.imshow(wc)
     ax.axis("off")
-    st.pyplot(fig)
+    return fig
 
 
-# ------------------------
-# PDF
-# ------------------------
-def generate_pdf(content):
-    buffer = io.BytesIO()
-    doc = SimpleDocTemplate(buffer)
-    styles = getSampleStyleSheet()
-    story = [Paragraph(content, styles["Normal"])]
-    doc.build(story)
-    buffer.seek(0)
-    return buffer
-
-
-# ------------------------
-# IA Gemini
-# ------------------------
-def ask_gemini(prompt):
-    api_key = st.secrets.get("GOOGLE_API_KEY", "")
-    if not api_key:
-        return "Google API Key não configurada."
-    genai.configure(api_key=api_key)
-    model = genai.GenerativeModel("gemini-1.5-flash")
-    resp = model.generate_content(prompt)
-    return resp.text
-
-
-# ------------------------
-# CSV Loader Robusto
-# ------------------------
-def load_csv_auto(file):
-    if file is None:
-        return None
-
-    raw = file.read()
-    enc = chardet.detect(raw)["encoding"]
-
-    for sep in [",", ";", "|", "\t"]:
+# =====================================================
+#  CSV LOADER
+# =====================================================
+def load_csv(file):
+    try:
+        return pd.read_csv(file, sep=None, engine="python")
+    except:
         try:
-            df = pd.read_csv(io.BytesIO(raw), encoding=enc, sep=sep)
-            if len(df.columns) > 1:
-                return df
+            return pd.read_csv(file, sep=";")
         except:
-            pass
-
-    raise ValueError("Não foi possível detectar o delimitador do CSV.")
+            return pd.read_csv(file, sep=",")
 
 
-# ------------------------
-# Landing Page + Login
-# ------------------------
-def landing_page():
-    st.markdown(
-        """
-        <style>
-        body {
-            background: linear-gradient(180deg, #000000 0%, #0f3b1c 50%, #ff6a00 100%) !important;
-        }
-        .center-box {
-            padding: 60px;
-            background: rgba(0,0,0,0.70);
-            border-radius: 18px;
-            width: 450px;
-            margin-left: auto;
-            margin-right: auto;
-            margin-top: 80px;
-            text-align: center;
-        }
-        .login-title {
-            color: white;
-            font-size: 32px;
-            font-weight: 600;
-        }
-        .login-sub {
-            color: #ff8f42;
-            font-size: 18px;
-            margin-bottom: 30px;
-        }
-        </style>
-        """,
-        unsafe_allow_html=True,
+# =====================================================
+#  AI FUNCTIONS
+# =====================================================
+def ai_analyze(df, column_name):
+    text = "\n".join(df[column_name].dropna().astype(str).tolist()[:200])
+
+    prompt = f"""
+    Analise profundamente as respostas abaixo (português).
+    Identifique:
+    - temas principais
+    - sentimentos
+    - oportunidades
+    - ações recomendadas
+    - resumo final
+
+    Texto analisado:
+    {text}
+    """
+
+    response = model.generate_content(prompt)
+    return response.text
+
+
+# =====================================================
+#  PDF Export
+# =====================================================
+def create_pdf(text):
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=letter)
+    styles = getSampleStyleSheet()
+    story = [Paragraph(text.replace("\n","<br/>"), styles["BodyText"])]
+    doc.build(story)
+    buf.seek(0)
+    return buf
+
+
+# =====================================================
+#  LOGIN
+# =====================================================
+def login_dialog():
+    with st.dialog("Login"):
+        email = st.text_input("Email")
+        password = st.text_input("Senha", type="password")
+
+        if st.button("Entrar"):
+            for user, data in st.secrets["users"].items():
+                if data["email"] == email:
+                    if verify_password(password, data["password"]):
+                        st.session_state.logged = True
+                        st.session_state.user = data["email"]
+                        st.rerun()
+                    else:
+                        st.error("Senha incorreta.")
+                        return
+            st.error("Usuário não encontrado.")
+
+
+# =====================================================
+#  ADMIN PANEL
+# =====================================================
+def admin_panel():
+    st.header("Painel Admin")
+
+    new_email = st.text_input("Email do novo usuário")
+    new_name = st.text_input("Nome")
+    new_pass = st.text_input("Senha")
+    
+    if st.button("Gerar Hash"):
+        hashv = pwd_context.hash(new_pass)
+        st.code(f"""
+[users.{new_email.split('@')[0]}]
+name = "{new_name}"
+email = "{new_email}"
+password = "{hashv}"
+""")
+
+    st.info("Cole o bloco acima no secrets.toml")
+
+
+# =====================================================
+#  MAIN APP
+# =====================================================
+def main_app():
+
+    st.title("📊 REPARA Analytics v13.4.2")
+
+    menu = st.sidebar.radio(
+        "Menu",
+        ["📥 Candidatos", "🏢 Empresas", "🔀 Cruzada", "🤖 Chat IA", "🛠 Admin"]
     )
 
-    st.markdown("<div class='center-box'>", unsafe_allow_html=True)
-
-    # LOGO via Base64
-    logo = load_logo_from_base64()
-    if logo:
-        st.image(logo, width=220)
-
-    st.markdown("<div class='login-title'>MindVision® Analytics</div>", unsafe_allow_html=True)
-    st.markdown("<div class='login-sub'>Acesso Restrito</div>", unsafe_allow_html=True)
-
-    email = st.text_input("Email", key="login_email")
-    password = st.text_input("Senha", type="password", key="login_pass")
-
-    if st.button("Entrar", key="btn_login"):
-        user = verify_user(email, password)
-        if user:
-            st.session_state["logged"] = True
-            st.session_state["username"] = user
-            st.session_state["email"] = email
-            st.rerun()
-        else:
-            st.error("Credenciais incorretas.")
-
-    st.markdown("</div>", unsafe_allow_html=True)
-
-
-# ------------------------
-# Painel Admin
-# ------------------------
-def admin_panel():
-    st.title("Painel Administrativo")
-
-    st.subheader("Gerar Hash PBKDF2")
-    senha = st.text_input("Senha para gerar hash", key="admin_newpass")
-    if st.button("Gerar Hash", key="admin_genhash"):
-        if senha:
-            st.code(pwd_context.hash(senha))
-        else:
-            st.warning("Digite uma senha.")
-
-    st.subheader("Modelo TOML para novo usuário:")
-    email = st.text_input("Novo email", key="new_email")
-    nome = st.text_input("Nome", key="new_nome")
-    hash_senha = st.text_input("Hash PBKDF2", key="new_hash")
-
-    if st.button("Gerar TOML", key="btn_toml"):
-        if email and nome and hash_senha:
-            st.code(
-                f"""
-[users.{email.split('@')[0]}]
-name = "{nome}"
-email = "{email}"
-password = "{hash_senha}"
-                """
-            )
-
-
-# ------------------------
-# APP PRINCIPAL
-# ------------------------
-def main_app():
-    st.sidebar.title(f"Bem-vindo(a), {st.session_state.get('username', '')}")
-    page = st.sidebar.radio("Menu", ["Dashboard", "Candidatos", "Empresas", "Admin"], key="menu_main")
-
-    # Dashboard
-    if page == "Dashboard":
-        st.title("Dashboard MindVision Analytics")
-        st.write("Visualização geral das análises.")
-
-    # Candidatos
-    if page == "Candidatos":
-        st.title("CSV de Candidatos")
-        file = st.file_uploader("Envie o CSV de Candidatos", type=["csv"], key="cand_upload")
-
-        if file:
-            try:
-                df = load_csv_auto(file)
-                st.dataframe(df, use_container_width=True)
-
-                text_cols = [c for c in df.columns if df[c].dtype == "object"]
-                col_sel = st.selectbox("Selecione coluna de texto", text_cols, key="cand_col")
-
-                if col_sel:
-                    cleaned = " ".join(df[col_sel].map(preprocess_text))
-                    generate_wordcloud(cleaned)
-
-                    st.subheader("Análise com IA")
-                    if st.button("Gerar Insights", key="insight_cand"):
-                        prompt = f"Analise a coluna '{col_sel}' dos candidatos:\n\n{cleaned[:5000]}"
-                        st.write(ask_gemini(prompt))
-
-            except Exception as e:
-                st.error(f"Erro ao ler CSV: {e}")
-
-    # Empresas
-    if page == "Empresas":
-        st.title("CSV de Empresas")
-        file = st.file_uploader("Envie o CSV de Empresas", type=["csv"], key="emp_upload")
-
-        if file:
-            try:
-                df = load_csv_auto(file)
-                st.dataframe(df, use_container_width=True)
-
-                text_cols = [c for c in df.columns if df[c].dtype == "object"]
-                col_sel = st.selectbox("Selecione coluna textual", text_cols, key="emp_col")
-
-                if col_sel:
-                    cleaned = " ".join(df[col_sel].map(preprocess_text))
-                    generate_wordcloud(cleaned)
-
-                    st.subheader("Análise IA")
-                    if st.button("Gerar Insights Empresas", key="insight_emp"):
-                        prompt = f"Analise a coluna '{col_sel}' das empresas:\n\n{cleaned[:5000]}"
-                        st.write(ask_gemini(prompt))
-
-            except Exception as e:
-                st.error(f"Erro ao ler CSV: {e}")
-
-    # Admin
-    if page == "Admin":
+    if menu == "🛠 Admin":
+        if st.session_state.user != "admin@repara.com":
+            st.error("Acesso restrito.")
+            return
         admin_panel()
+        return
 
-    # Logout
-    if st.sidebar.button("Sair", key="logout"):
-        st.session_state.clear()
-        st.rerun()
+    uploaded = st.sidebar.file_uploader("Upload CSV", type=["csv"])
+
+    if not uploaded:
+        st.info("Envie um arquivo CSV para começar.")
+        return
+
+    df = load_csv(uploaded)
+    st.subheader("Preview")
+    st.dataframe(df.head())
+
+    # detectar colunas textuais
+    cols_text = [
+        c for c in df.columns
+        if df[c].dtype == object or df[c].astype(str).str.contains(r"[A-Za-zÀ-ÿ]").mean() > 0.2
+    ]
+
+    if menu in ["📥 Candidatos", "🏢 Empresas"]:
+
+        st.subheader("Selecione uma coluna textual:")
+        col_sel = st.selectbox("Coluna", cols_text)
+
+        st.subheader("Tema do Wordcloud")
+        theme = st.selectbox("Tema", ["Dark Elegante","Deep Purple","Neon Blue","Gold","Carbon Gray"])
+
+        st.subheader("Wordcloud Inteligente")
+        all_text = " ".join(df[col_sel].dropna().astype(str).tolist())
+        
+        words = extract_relevant_words_from_text(all_text)
+        fig = generate_wordcloud(words, theme=theme)
+        st.pyplot(fig)
+
+        if st.button("Análise com IA"):
+            result = ai_analyze(df, col_sel)
+            st.subheader("💡 Insight IA")
+            st.write(result)
+
+            pdf_data = create_pdf(result)
+            st.download_button("Baixar PDF", pdf_data, "analise.pdf")
+
+    elif menu == "🔀 Cruzada":
+        st.subheader("Escolha as colunas de comparação")
+
+        colA = st.selectbox("Coluna Candidatos", cols_text)
+        colB = st.selectbox("Coluna Empresas", cols_text)
+
+        if st.button("Análise Cruzada IA"):
+            tA = "\n".join(df[colA].dropna().astype(str).tolist()[:100])
+            tB = "\n".join(df[colB].dropna().astype(str).tolist()[:100])
+
+            prompt = f"""
+Compare temas, sentimentos e oportunidades entre:
+
+Candidatos:
+{tA}
+
+Empresas:
+{tB}
+"""
+            result = model.generate_content(prompt).text
+            st.write(result)
+
+    elif menu == "🤖 Chat IA":
+        st.subheader("Chat sobre os dados")
+        user_msg = st.text_area("Pergunte algo:")
+
+        if st.button("Enviar"):
+            preview = df.head().to_csv(index=False)
+            prompt = f"""
+Você é um analista de dados.
+Use este preview para responder:
+
+{preview}
+
+Pergunta: {user_msg}
+"""
+            st.write(model.generate_content(prompt).text)
 
 
-# ------------------------
-# ROTEAMENTO DE TELAS
-# ------------------------
-if "logged" not in st.session_state or not st.session_state["logged"]:
-    landing_page()
+# =====================================================
+#  BOOTSTRAP
+# =====================================================
+if "logged" not in st.session_state:
+    login_dialog()
 else:
     main_app()
