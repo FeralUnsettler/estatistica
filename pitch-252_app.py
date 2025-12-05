@@ -1,8 +1,6 @@
-# REPARA Analytics — v13.5
-# - DEI Specialist system prompt (aplicado a análises e chat)
-# - Nova aba 🔐 Recuperação (token + nova senha)
-# - Wordcloud inteligente sem spaCy (NLTK + heurísticas)
-# - Compatível com Streamlit Cloud
+# REPARA Analytics — v13.5.1
+# Correção: st.experimental_rerun() removido do chat; usa flag _chat_rerun rerun seguro.
+# Mantém: DEI system prompt, Wordcloud inteligente sem spaCy, aba Recuperação, login modal elegante.
 
 import streamlit as st
 import pandas as pd
@@ -61,7 +59,6 @@ Ao analisar respostas de candidatos e informações de empresas, foque em:
 4) sugerir indicadores acionáveis e medidas de mitigação (ex.: ajustes de recrutamento, programas de capacitação, avaliações por competências, parcerias públicas).
 
 Responda sempre em Português do Brasil (pt-BR), de forma clara, empática e acionável.
-Adapte o tom ao público (RH, gestores e formuladores de políticas).
 """
 
 # ----------------------------
@@ -399,7 +396,9 @@ def chat_with_gemini_context(df_cand, df_emp):
         st.session_state.chat_history.append({"role":"user","text":q})
         if "GOOGLE_API_KEY" not in st.secrets:
             st.session_state.chat_history.append({"role":"assistant","text":"Gemini não configurado."})
-            st.experimental_rerun()
+            # request a safe rerun (outside) to render assistant reply
+            st.session_state._chat_rerun = True
+            return
         # Compose prompt with DEI system prompt + context + user question
         prompt = f"""
 {DEI_SYSTEM_PROMPT}
@@ -419,7 +418,8 @@ Responda em Português do Brasil, com foco em recomendações práticas e polít
         except Exception as e:
             ans = f"Erro: {e}"
         st.session_state.chat_history.append({"role":"assistant","text":ans})
-        st.experimental_rerun()
+        # mark safe rerun to re-render page with assistant answer
+        st.session_state._chat_rerun = True
 
 # ----------------------------
 # PDF generator
@@ -482,7 +482,7 @@ def dashboard_kpis(df_cand, df_emp):
 # Main app (with new '🔐 Recuperação' tab)
 # ----------------------------
 def main_app():
-    st.title("📊 REPARA Analytics — v13.5")
+    st.title("📊 REPARA Analytics — v13.5.1")
 
     st.sidebar.success(f"Usuário: {st.session_state.userinfo.get('name')}")
     if st.sidebar.button("Painel Admin"):
@@ -709,10 +709,16 @@ if "show_recovery" not in st.session_state:
     st.session_state.show_recovery = False
 if "_rerun" not in st.session_state:
     st.session_state._rerun = False
+if "_chat_rerun" not in st.session_state:
+    st.session_state._chat_rerun = False
 
-# safe rerun outside dialogs
+# safe rerun flags handled outside dialogs
 if st.session_state._rerun:
     st.session_state._rerun = False
+    st.rerun()
+
+if st.session_state._chat_rerun:
+    st.session_state._chat_rerun = False
     st.rerun()
 
 if not st.session_state.logged:
