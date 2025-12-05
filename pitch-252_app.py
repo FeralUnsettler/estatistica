@@ -1,691 +1,314 @@
-# ================================================================
-# REPARA ANALYTICS — v13.4
-# Wordcloud inteligente (sem spaCy) — usa NLTK + heurísticas
-# Mantém: Auth, Admin, Chat Gemini, PDF, KPIs, CSV robusto
-# ================================================================
+# ===============================================================
+#  REPARA ANALYTICS — V13.4.4 SM (Super Minimal)
+#  100% compatível com Streamlit Cloud
+# ===============================================================
 
 import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
 from wordcloud import WordCloud
-import google.generativeai as genai
-from passlib.context import CryptContext
-import time
-import secrets
-import io
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
-from reportlab.lib.styles import getSampleStyleSheet
-from reportlab.lib.pagesizes import A4
 import re
+import io
+from passlib.context import CryptContext
+from reportlab.platypus import SimpleDocTemplate, Paragraph
+from reportlab.lib.pagesizes import letter
+from reportlab.lib.styles import getSampleStyleSheet
+import google.generativeai as genai
 import nltk
-from collections import Counter
-from html import unescape
-
-# ----------------------------
-# Config / Setup
-# ----------------------------
-st.set_page_config(page_title="Repara Analytics", layout="wide")
-
-# configure gemini if API key present
-if "GOOGLE_API_KEY" in st.secrets:
-    try:
-        genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
-    except Exception:
-        pass
-
-# ensure NLTK stopwords are available
-nltk.download("stopwords", quiet=True)
 from nltk.corpus import stopwords
 
-# ----------------------------
-# Requirements-safe security
-# ----------------------------
-PWD_CTX = CryptContext(schemes=["pbkdf2_sha256"], deprecated="auto")
-RESET_TOKEN_TTL = 15 * 60
+nltk.download("stopwords", quiet=True)
 
-# ----------------------------
-# Load users from secrets
-# ----------------------------
-def load_users():
-    raw = st.secrets.get("users", {}) or {}
-    users = {}
-    for u, info in raw.items():
-        users[u] = {
-            "name": info.get("name"),
-            "email": info.get("email"),
-            "password": info.get("password"),
-        }
-    return users
 
-USERS = load_users()
+# =====================================================
+# PASSWORD HASHING
+# =====================================================
+pwd_context = CryptContext(schemes=["pbkdf2_sha256"], deprecated="auto")
 
-# ----------------------------
-# Token helpers
-# ----------------------------
-def init_tokens():
-    if "reset_tokens" not in st.session_state:
-        st.session_state.reset_tokens = {}
-
-def generate_token(username):
-    token = secrets.token_urlsafe(16)
-    st.session_state.reset_tokens[token] = {
-        "username": username,
-        "expire": time.time() + RESET_TOKEN_TTL,
-    }
-    return token
-
-def validate_token(token):
-    entry = st.session_state.reset_tokens.get(token)
-    if not entry:
-        return False, "Token inválido"
-    if time.time() > entry["expire"]:
-        del st.session_state.reset_tokens[token]
-        return False, "Token expirado"
-    return True, entry["username"]
-
-# ----------------------------
-# Auth helpers
-# ----------------------------
 def verify_password(plain, hashed):
     try:
-        return PWD_CTX.verify(plain, hashed)
-    except Exception:
-        return False
-
-def authenticate(username, password):
-    if username not in USERS:
-        return False, "Usuário não encontrado."
-    if verify_password(password, USERS[username]["password"]):
-        return True, USERS[username]
-    return False, "Senha incorreta."
-
-# ----------------------------
-# UI styling
-# ----------------------------
-def inject_css():
-    st.markdown(
-        """
-    <style>
-    .login-box { background: #ffffff; padding: 18px; border-radius: 10px; box-shadow: 0 6px 18px rgba(0,0,0,0.12); }
-    .login-title { font-size: 20px; font-weight:700; color:#0b63ce; text-align:center; margin-bottom:8px; }
-    </style>
-    """,
-        unsafe_allow_html=True,
-    )
-
-# ----------------------------
-# Dialogs (login / recovery) — no rerun inside
-# ----------------------------
-@st.dialog("Login")
-def login_dialog():
-    inject_css()
-    st.markdown("<div class='login-box'>", unsafe_allow_html=True)
-    st.markdown("<div class='login-title'>REPARA — Login</div>", unsafe_allow_html=True)
-
-    user = st.text_input("Usuário", key="login_user")
-    pwd = st.text_input("Senha", type="password", key="login_pwd")
-
-    if st.button("Entrar", key="login_btn"):
-        ok, info = authenticate(user, pwd)
-        if ok:
-            st.session_state.logged = True
-            st.session_state.userinfo = info
-            st.session_state.page = "main"
-            st.session_state._rerun = True
-            st.success("Login bem-sucedido.")
-        else:
-            st.error(info)
-
-    if st.button("Esqueci a senha", key="login_forgot"):
-        st.session_state.show_recovery = True
-        st.session_state._rerun = True
-
-    st.markdown("</div>", unsafe_allow_html=True)
-
-@st.dialog("Recuperação de senha")
-def recovery_dialog():
-    inject_css()
-    st.markdown("<div class='login-box'>", unsafe_allow_html=True)
-    st.markdown("<div class='login-title'>Recuperação de senha</div>", unsafe_allow_html=True)
-
-    username = st.text_input("Usuário para recuperação", key="rec_user")
-    if st.button("Gerar token", key="rec_gen"):
-        if username not in USERS:
-            st.error("Usuário não encontrado.")
-        else:
-            token = generate_token(username)
-            st.success("Token gerado (15 min).")
-            st.info(f"Token: `{token}` — em produção envie por e-mail.")
-            st.session_state._rerun = True
-
-    st.markdown("</div>", unsafe_allow_html=True)
-
-# ----------------------------
-# CSV reading robust (detect delimiter)
-# ----------------------------
-def read_csv_any(file):
-    if file is None:
-        return None
-    try:
-        size = getattr(file, "size", None)
-        if size == 0:
-            st.warning("Arquivo vazio.")
-            return None
-    except Exception:
-        pass
-
-    delims = [",", ";", "\t", "|"]
-    for d in delims:
-        try:
-            if hasattr(file, "seek"):
-                try:
-                    file.seek(0)
-                except:
-                    pass
-            df = pd.read_csv(file, sep=d, engine="python")
-            df.columns = [c.strip() if isinstance(c, str) else c for c in df.columns]
-            if not df.empty:
-                return df
-        except Exception:
-            continue
-    try:
-        if hasattr(file, "seek"):
-            try:
-                file.seek(0)
-            except:
-                pass
-        df = pd.read_csv(file, sep=None, engine="python")
-        df.columns = [c.strip() if isinstance(c, str) else c for c in df.columns]
-        if not df.empty:
-            return df
-    except Exception:
-        st.error("Erro ao ler CSV. Verifique delimitadores e formato.")
-        return None
-
-# ----------------------------
-# Textual column detection (robust)
-# ----------------------------
-def detect_text_columns(df, min_pct_text=0.10):
-    candidates = []
-    n = len(df)
-    if n == 0:
-        return []
-    for col in df.columns:
-        ser = df[col].astype(str).fillna("")
-        pct_text = ser.str.contains(r"[A-Za-zÀ-ÿ]", regex=True).mean()
-        avg_len = ser.str.len().mean()
-        unique_prop = ser.nunique() / max(1, n)
-        score = (pct_text * 0.6) + (min(1.0, avg_len / 30.0) * 0.3) + (min(1.0, unique_prop) * 0.1)
-        if pct_text >= min_pct_text or avg_len >= 20:
-            candidates.append((col, score, pct_text, avg_len, unique_prop))
-    candidates.sort(key=lambda x: x[1], reverse=True)
-    return candidates
-
-# ----------------------------
-# --- WORDCLOUD INTELLIGENTE (NLTK + heuristics) ---
-# ----------------------------
-# Build stopwords (nltk + custom)
-STOP_PT = set(stopwords.words("portuguese"))
-CUSTOM_STOP = {
-    "sim","não","nao","ok","bom","boa","coisa","coisas","dia","mesmo","mesma",
-    "gente","pessoa","pessoas","empresa","empresas","acho","acredito","ser",
-    "estar","ter","fazer","feito","vou","vai","ja","já","pois","ainda",
-    "sobre","também","tambem","etc","tipo","forma","algo","muito","pouco",
-    "favor","porfavor","obrigado","agradeço","obrigada","ola","oi"
-}
-ALL_STOP = STOP_PT.union(CUSTOM_STOP)
-
-_word_pattern = re.compile(r"[A-Za-zÀ-ÿ0-9\-']{2,}", flags=re.UNICODE)
-
-# Heuristic rules for POS-like classification (lightweight)
-VERB_SUFFIXES = ("ar","er","ir","ando","endo","indo","ado","ido","arão","aram","emos","aram","aria","eria","iria","ava","eva","iva","ou","iu")
-ADJ_SUFFIXES = ("oso","osa","ável","ível","al","ar","ico","ica","ico","ica","nte","ível","oso","osa","ivo","iva")
-NOUN_SUFFIXES = ("ção","ções","dade","ismo","ista","mento","agem","idade","ia","ismo","eza")
-
-def clean_token(t):
-    t = unescape(t)
-    t = t.lower().strip()
-    t = re.sub(r"(^['\"-]+)|(['\"-]+$)", "", t)
-    # remove trailing punctuation
-    t = re.sub(r"[^\wÀ-ÿ\-']+", "", t)
-    return t
-
-def is_number(s):
-    try:
-        float(s.replace(",", "."))
-        return True
+        return pwd_context.verify(plain, hashed)
     except:
         return False
 
-def simple_lemmatize(token):
-    # very simple and safe heuristics (Portuguese)
-    t = token
-    # remove common gerundios/ad/idos
-    for suf in ("ando","endo","indo","ado","ido","mente"):
-        if t.endswith(suf) and len(t)>len(suf)+3:
-            return t[:-len(suf)]
-    # infinitive endings
-    for suf in ("ar","er","ir"):
-        if t.endswith(suf) and len(t)>len(suf)+3:
-            return t[:-len(suf)]
-    # plurals -> singular (ões -> ão / s)
-    if t.endswith("ões"):
-        return t[:-3] + "ao"
-    if t.endswith("s") and len(t)>4:
-        return t[:-1]
-    return t
 
-def classify_token(token):
-    t = token.lower()
-    # heuristics: prefer verb detection
-    if any(t.endswith(suf) for suf in VERB_SUFFIXES):
+# =====================================================
+# GOOGLE GEMINI CONFIG
+# =====================================================
+if "GOOGLE_API_KEY" in st.secrets:
+    genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
+    model = genai.GenerativeModel("gemini-1.5-flash")
+else:
+    model = None
+
+
+# =====================================================
+# SENTIMENT LEXICON
+# =====================================================
+POSITIVE = {
+    "bom","ótimo","excelente","feliz","positivo","organizado",
+    "eficiente","tranquilo","justo","acolhedor"
+}
+
+NEGATIVE = {
+    "ruim","péssimo","negativo","difícil","injusto","horrível",
+    "ansioso","demorado","desafio","problema"
+}
+
+
+# =====================================================
+# WORD PROCESSING
+# =====================================================
+STOP_PT = set(stopwords.words("portuguese"))
+CUSTOM_STOP = {
+    "sim","não","nao","ok","bom","boa","coisa","coisas","dia",
+    "gente","pessoa","pessoas","empresa","empresas","acho",
+    "ser","estar","ter","fazer","vou","vai","já","ja","pois"
+}
+STOP_ALL = STOP_PT.union(CUSTOM_STOP)
+
+pattern = re.compile(r"[A-Za-zÀ-ÿ]+")
+
+def clean_token(t):
+    return re.sub(r"[^A-Za-zÀ-ÿ]", "", t.lower()).strip()
+
+def classify(word):
+    if word.endswith(("ar","er","ir")):
         return "VERB"
-    if any(t.endswith(suf) for suf in ADJ_SUFFIXES):
+    if word.endswith(("dade","ção","são","mento","agem")):
+        return "NOUN"
+    if word.endswith(("vel","iva","ivo","oso","osa")):
         return "ADJ"
-    if any(t.endswith(suf) for suf in NOUN_SUFFIXES):
-        return "NOUN"
-    # fallback heuristics
-    if len(t) > 6:
-        return "NOUN"
     return "OTHER"
 
-def extract_relevant_words_from_text(text, top_k=None):
-    """
-    Returns list of relevant lemmas emphasizing verbs, adjectives, nouns.
-    top_k: optional cap on number of returned tokens (freq-based)
-    """
-    if not isinstance(text, str) or not text.strip():
+def weight_sentiment(w):
+    if w in POSITIVE: return 4
+    if w in NEGATIVE: return 4
+    return 0
+
+def extract_words(text):
+    if not isinstance(text, str):
         return []
+    raw = pattern.findall(text)
+    words = []
 
-    tokens = _word_pattern.findall(text)
-    cleaned = []
-    for tk in tokens:
-        tkc = clean_token(tk)
-        if not tkc:
-            continue
-        if is_number(tkc):
-            continue
-        if tkc in ALL_STOP:
-            continue
-        if len(tkc) <= 2:
-            continue
-        cleaned.append(tkc)
+    for t in raw:
+        t2 = clean_token(t)
+        if len(t2) <= 2: continue
+        if t2 in STOP_ALL: continue
+        words.append(t2)
 
-    if not cleaned:
-        return []
+    weighted = {}
+    for w in words:
+        base_weight = {
+            "VERB":3,
+            "ADJ":2,
+            "NOUN":2,
+            "OTHER":1
+        }.get(classify(w),1)
 
-    # classify and lemmatize
-    lemmas = []
-    weighted = []
-    for tk in cleaned:
-        cls = classify_token(tk)
-        lemma = simple_lemmatize(tk)
-        # weight priority: VERB=3, ADJ=2, NOUN=2, OTHER=1
-        weight = 1
-        if cls == "VERB":
-            weight = 3
-        elif cls == "ADJ":
-            weight = 2
-        elif cls == "NOUN":
-            weight = 2
-        else:
-            weight = 0.5
-        weighted.append((lemma, weight))
+        total = base_weight + weight_sentiment(w)
+        weighted[w] = weighted.get(w,0) + total
 
-    # accumulate frequencies with weights
-    freq = {}
-    for lemma, w in weighted:
-        freq[lemma] = freq.get(lemma, 0) + w
+    final = []
+    for w,score in weighted.items():
+        final.extend([w]*max(1,int(score)))
 
-    # sort by weighted frequency
-    items = sorted(freq.items(), key=lambda x: x[1], reverse=True)
-    if top_k:
-        items = items[:top_k]
-    # return list of lemmas repeated by int(weight) to emphasize in wordcloud
-    out = []
-    for lemma, score in items:
-        repeat = max(1, int(round(score)))
-        out.extend([lemma] * repeat)
-    return out
+    return final
 
-# ----------------------------
-# Gemini analyze helper (unchanged)
-# ----------------------------
-def gemini_analyse(text_list, title="Análise"):
-    if not text_list:
-        return "Nenhum texto para análise."
-    if "GOOGLE_API_KEY" not in st.secrets:
-        return "Gemini API key não encontrada em secrets. Configure GOOGLE_API_KEY."
-    joined = "\n".join(map(str, text_list))
-    prompt = f"""
-You are an experienced data analyst. Produce a concise structured analysis for the text below.
 
-Title: {title}
+def generate_wordcloud(words, theme="Dark"):
+    THEMES = {
+        "Dark": ("black","viridis"),
+        "Deep Purple": ("#0d001f","plasma"),
+        "Neon Blue": ("#00111e","cool"),
+        "Gold": ("black","cividis"),
+        "Carbon": ("#1a1a1a","magma")
+    }
 
-Deliver:
-1) Executive summary (1 short paragraph)
-2) Top themes (bullets)
-3) Sentiment overview
-4) Actionable recommendations
-5) A short table (Theme | Example | Impact | Action)
+    bg, cmap = THEMES.get(theme, ("black","viridis"))
 
-Text:
-{joined}
-"""
+    wc = WordCloud(
+        width=900, height=450,
+        background_color=bg,
+        colormap=cmap,
+        collocations=False,
+        max_words=150
+    ).generate(" ".join(words))
+
+    fig, ax = plt.subplots(figsize=(12,6))
+    ax.imshow(wc)
+    ax.axis("off")
+    return fig
+
+
+# =====================================================
+# LOAD CSV ROBUSTO
+# =====================================================
+def load_csv(file):
     try:
-        model = genai.GenerativeModel("gemini-2.5-flash")
-        resp = model.generate_content(prompt)
-        return resp.text
-    except Exception as e:
-        return f"Erro ao chamar Gemini: {e}"
-
-# ----------------------------
-# Chat with Gemini (context preview)
-# ----------------------------
-def chat_with_gemini_context(df_cand, df_emp):
-    st.header("💬 Chat com Gemini — pergunte sobre os dados")
-    if "chat_history" not in st.session_state:
-        st.session_state.chat_history = []
-    context = ""
-    if df_cand is not None:
-        context += "CANDIDATOS (preview):\n" + df_cand.head(8).to_csv(index=False) + "\n"
-    if df_emp is not None:
-        context += "EMPRESAS (preview):\n" + df_emp.head(8).to_csv(index=False) + "\n"
-    for msg in st.session_state.chat_history:
-        role = "Você" if msg["role"] == "user" else "IA"
-        st.markdown(f"**{role}:** {msg['text']}")
-    q = st.text_input("Pergunta sobre os dados", key="chat_q")
-    if st.button("Enviar pergunta", key="chat_send"):
-        if not q.strip():
-            st.warning("Escreva algo antes de enviar.")
-            return
-        st.session_state.chat_history.append({"role":"user","text":q})
-        if "GOOGLE_API_KEY" not in st.secrets:
-            st.session_state.chat_history.append({"role":"assistant","text":"Gemini não configurado."})
-            st.experimental_rerun()
-        prompt = f"Context:\n{context}\nQuestion: {q}"
+        return pd.read_csv(file, sep=None, engine="python")
+    except:
         try:
-            model = genai.GenerativeModel("gemini-2.5-flash")
-            resp = model.generate_content(prompt)
-            ans = resp.text
-        except Exception as e:
-            ans = f"Erro: {e}"
-        st.session_state.chat_history.append({"role":"assistant","text":ans})
-        st.experimental_rerun()
+            return pd.read_csv(file, sep=";")
+        except:
+            return pd.read_csv(file, sep=",")
 
-# ----------------------------
-# PDF generation
-# ----------------------------
-def generate_pdf_bytes(title, text):
-    buffer = io.BytesIO()
-    doc = SimpleDocTemplate(buffer, pagesize=A4)
+
+# =====================================================
+# AI ANALYSIS
+# =====================================================
+def ai_analyze(df, col):
+    text = "\n".join(df[col].dropna().astype(str))
+
+    prompt = f"""
+Analise profundamente as respostas a seguir.
+Identifique temas, sentimentos e oportunidades.
+
+Texto:
+{text}
+"""
+
+    return model.generate_content(prompt).text
+
+
+# =====================================================
+# PDF
+# =====================================================
+def make_pdf(text):
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=letter)
     styles = getSampleStyleSheet()
-    story = [Paragraph(title, styles["Title"]), Spacer(1,12)]
-    for line in text.split("\n"):
-        if line.strip():
-            story.append(Paragraph(line.replace("&","and"), styles["Normal"]))
-        else:
-            story.append(Spacer(1,6))
+    story = [Paragraph(text.replace("\n","<br/>"), styles["BodyText"])]
     doc.build(story)
-    buffer.seek(0)
-    return buffer
+    buf.seek(0)
+    return buf
 
-# ----------------------------
-# Admin panel UI (TOML generator)
-# ----------------------------
-def admin_panel_ui():
-    st.title("🛡️ Painel Admin")
-    st.info("Gera blocos TOML para colar em Streamlit Secrets.")
-    st.subheader("Usuários atuais")
-    for u, info in USERS.items():
-        st.markdown(f"- **{u}** — {info.get('email')}")
-    st.markdown("---")
-    st.subheader("Criar novo usuário")
-    nu = st.text_input("Username", key="admin_nu")
-    nm = st.text_input("Nome completo", key="admin_nm")
-    em = st.text_input("Email", key="admin_em")
-    pw = st.text_input("Senha (gera hash)", type="password", key="admin_pw")
-    if st.button("Gerar bloco TOML", key="admin_gen"):
-        if not nu or not pw:
-            st.error("Preencha username e senha.")
-        else:
-            h = PWD_CTX.hash(pw)
-            st.code(f'[users.{nu}]\nname = "{nm}"\nemail = "{em}"\npassword = "{h}"', language="toml")
-    st.markdown("---")
-    st.subheader("Gerar hash isolado")
-    ph = st.text_input("Senha para hash", type="password", key="admin_hash_pw")
-    if st.button("Gerar hash isolado", key="admin_hash_btn"):
-        if not ph:
-            st.error("Digite a senha.")
-        else:
-            st.code(PWD_CTX.hash(ph))
 
-# ----------------------------
-# KPIs
-# ----------------------------
-def dashboard_kpis(df_cand, df_emp):
-    st.header("📊 KPIs Rápidos")
-    c1,c2,c3 = st.columns(3)
-    c1.metric("Candidatos", len(df_cand) if df_cand is not None else "—")
-    c2.metric("Colunas (candidatos)", len(df_cand.columns) if df_cand is not None else "—")
-    c3.metric("Empresas", len(df_emp) if df_emp is not None else "—")
+# =====================================================
+# LOGIN MODAL
+# =====================================================
+def open_login_modal():
+    with st.modal("Login"):
+        email = st.text_input("Email")
+        password = st.text_input("Senha", type="password")
 
-# ----------------------------
-# MAIN APP (integrates wordcloud)
-# ----------------------------
+        if st.button("Entrar"):
+            for u, data in st.secrets["users"].items():
+                if email == data["email"]:
+                    if verify_password(password, data["password"]):
+                        st.session_state.logged = True
+                        st.session_state.user = email
+                        st.session_state._rerun = True
+                        return
+                    else:
+                        st.error("Senha incorreta")
+                        return
+            st.error("Usuário não encontrado")
+
+
+def open_recovery_modal():
+    with st.modal("Recuperar Senha"):
+        st.info("Contate o administrador para redefinir sua senha.")
+
+
+# =====================================================
+# ADMIN PANEL
+# =====================================================
+def admin_panel():
+    st.header("Painel Admin")
+
+    new_email = st.text_input("Novo email")
+    new_name  = st.text_input("Nome")
+    new_pass  = st.text_input("Senha")
+
+    if st.button("Gerar Hash"):
+        h = pwd_context.hash(new_pass)
+        st.code(f"""
+[users.{new_email.split('@')[0]}]
+name = "{new_name}"
+email = "{new_email}"
+password = "{h}"
+""")
+
+
+# =====================================================
+# MAIN APP
+# =====================================================
 def main_app():
-    st.title("📊 REPARA Analytics — v13.4")
 
-    st.sidebar.success(f"Usuário: {st.session_state.userinfo.get('name')}")
-    if st.sidebar.button("Painel Admin"):
-        st.session_state.page = "admin"
-        st.session_state._rerun = True
-    if st.sidebar.button("Sair"):
-        st.session_state.logged = False
-        st.session_state._rerun = True
+    st.title("📊 REPARA Analytics — 13.4.4 SM")
 
-    if st.session_state.page == "admin":
-        if st.session_state.userinfo.get("email") != "admin@repara.com":
-            st.error("Acesso restrito ao admin.")
+    menu = st.sidebar.radio(
+        "Menu",
+        ["📥 Candidatos", "🏢 Empresas", "🤖 IA Chat", "🛠 Admin"]
+    )
+
+    uploaded = st.sidebar.file_uploader("Envie seu CSV", type="csv")
+
+    if menu == "🛠 Admin":
+        if st.session_state.user != "admin@repara.com":
+            st.error("Acesso restrito")
             return
-        admin_panel_ui()
+        admin_panel()
         return
 
-    st.sidebar.header("📥 Upload CSVs")
-    cand_file = st.sidebar.file_uploader("Candidatos (CSV)", type=["csv"])
-    emp_file = st.sidebar.file_uploader("Empresas (CSV)", type=["csv"])
+    if not uploaded:
+        st.info("Envie um CSV para começar.")
+        return
 
-    df_cand = read_csv_any(cand_file) if cand_file else None
-    df_emp = read_csv_any(emp_file) if emp_file else None
+    df = load_csv(uploaded)
+    st.subheader("Preview dos Dados")
+    st.dataframe(df.head())
 
-    dashboard_kpis(df_cand, df_emp)
+    text_cols = [
+        c for c in df.columns
+        if df[c].astype(str).str.contains(r"[A-Za-zÀ-ÿ]").mean() > 0.15
+    ]
 
-    tabs = st.tabs(["👤 Candidatos", "🏢 Empresas", "🔀 Cruzada", "💬 Chat IA"])
+    if not text_cols:
+        st.warning("Nenhuma coluna textual encontrada.")
+        return
 
-    # CANDIDATOS
-    with tabs[0]:
-        st.header("👤 Candidatos")
-        if df_cand is None:
-            st.info("Envie o CSV de candidatos pela sidebar.")
-        else:
-            st.dataframe(df_cand.head(50))
-            candidates = detect_text_columns(df_cand)
-            if candidates:
-                st.subheader("Colunas textuais detectadas (ordem por score):")
-                for col, score, pct_text, avg_len, uniq in candidates:
-                    st.markdown(f"- **{col}** — score {score:.2f} — pct_text {pct_text:.2f} — avg_len {avg_len:.1f}")
-                default_col = candidates[0][0]
-            else:
-                st.warning("Nenhuma coluna textual detectada automaticamente.")
-                default_col = None
+    col = st.selectbox("Escolha a coluna", text_cols)
 
-            st.markdown("**Selecione a coluna que contém respostas textuais (p/ análise IA / wordcloud):**")
-            col_choice = st.selectbox("Coluna textual", options=[None] + list(df_cand.columns), index=0)
-            if col_choice is None and default_col:
-                col_choice = default_col
+    st.subheader("Tema do Wordcloud")
+    theme = st.selectbox("Tema", ["Dark","Deep Purple","Neon Blue","Gold","Carbon","Carbon Gray"])
 
-            if col_choice:
-                st.subheader(f"Preview — coluna: {col_choice}")
-                st.dataframe(df_cand[[col_choice]].head(10))
-                text_series = df_cand[col_choice].dropna().astype(str)
-                text_joined = " ".join(text_series.tolist())
-                if len(text_joined.strip()) < 10:
-                    st.info("Pouco texto nesta coluna — talvez não haja conteúdo para IA/wordcloud.")
-                else:
-                    # Wordcloud intelligent
-                    if st.button("Gerar Wordcloud Inteligente"):
-                        words = extract_relevant_words_from_text(text_joined, top_k=200)
-                        if not words:
-                            st.warning("Nenhuma palavra relevante encontrada para Wordcloud.")
-                        else:
-                            cleaned_text = " ".join(words)
-                            wc = WordCloud(
-                                width=900,
-                                height=400,
-                                collocations=False,
-                                background_color="white",
-                                max_words=150
-                            ).generate(cleaned_text)
-                            fig, ax = plt.subplots(figsize=(10,4))
-                            ax.imshow(wc)
-                            ax.axis("off")
-                            st.pyplot(fig)
+    text_all = " ".join(df[col].dropna().astype(str))
+    words = extract_words(text_all)
+    fig = generate_wordcloud(words, theme)
+    st.pyplot(fig)
 
-                    if st.button("IA — Analisar candidatos"):
-                        result = gemini_analyse(text_series.tolist(), title="Candidatos")
-                        st.markdown(result)
-                        buf = generate_pdf_bytes("Análise Candidatos", result)
-                        st.download_button("📥 Baixar PDF (Candidatos)", data=buf, file_name="analise_candidatos.pdf", mime="application/pdf")
-            else:
-                st.info("Selecione uma coluna para ativar a análise IA / Wordcloud.")
+    if st.button("Análise com IA"):
+        result = ai_analyze(df, col)
+        st.write(result)
 
-    # EMPRESAS
-    with tabs[1]:
-        st.header("🏢 Empresas")
-        if df_emp is None:
-            st.info("Envie o CSV de empresas pela sidebar.")
-        else:
-            st.dataframe(df_emp.head(50))
-            candidates_e = detect_text_columns(df_emp)
-            if candidates_e:
-                st.subheader("Colunas textuais detectadas (empresas):")
-                for col, score, pct_text, avg_len, uniq in candidates_e:
-                    st.markdown(f"- **{col}** — score {score:.2f}")
-                default_col_e = candidates_e[0][0]
-            else:
-                st.warning("Nenhuma coluna textual detectada automaticamente.")
-                default_col_e = None
+        pdf = make_pdf(result)
+        st.download_button("Baixar PDF", pdf, "analise.pdf")
 
-            st.markdown("**Selecione coluna textual (empresas):**")
-            col_choice_e = st.selectbox("Coluna empresas", options=[None] + list(df_emp.columns), index=0)
-            if col_choice_e is None and default_col_e:
-                col_choice_e = default_col_e
 
-            if col_choice_e:
-                st.subheader(f"Preview — coluna: {col_choice_e}")
-                st.dataframe(df_emp[[col_choice_e]].head(10))
-                if st.button("Gerar Wordcloud Inteligente (empresas)"):
-                    words = extract_relevant_words_from_text(" ".join(df_emp[col_choice_e].dropna().astype(str).tolist()), top_k=200)
-                    if not words:
-                        st.warning("Nenhuma palavra relevante encontrada.")
-                    else:
-                        wc = WordCloud(width=900, height=400, collocations=False, background_color="white", max_words=150).generate(" ".join(words))
-                        fig, ax = plt.subplots(figsize=(10,4))
-                        ax.imshow(wc)
-                        ax.axis("off")
-                        st.pyplot(fig)
-
-                if st.button("IA — Analisar empresas", key="an_emp"):
-                    result = gemini_analyse(df_emp[col_choice_e].dropna().astype(str).tolist(), title="Empresas")
-                    st.markdown(result)
-                    buf = generate_pdf_bytes("Análise Empresas", result)
-                    st.download_button("📥 Baixar PDF (Empresas)", data=buf, file_name="analise_empresas.pdf", mime="application/pdf")
-            else:
-                st.info("Selecione uma coluna para ativar a análise IA.")
-
-    # CRUZADA
-    with tabs[2]:
-        st.header("🔀 Análise Cruzada")
-        if df_cand is None or df_emp is None:
-            st.info("Envie ambos os CSVs (candidatos e empresas).")
-        else:
-            cand_cands = detect_text_columns(df_cand)
-            emp_cands = detect_text_columns(df_emp)
-            default_c = cand_cands[0][0] if cand_cands else None
-            default_e = emp_cands[0][0] if emp_cands else None
-            st.markdown("Selecione coluna textual (candidatos) para cruzamento:")
-            ccol = st.selectbox("Candidato (coluna)", options=[None] + list(df_cand.columns), index=0)
-            if ccol is None and default_c:
-                ccol = default_c
-            st.markdown("Selecione coluna textual (empresas) para cruzamento:")
-            ecol = st.selectbox("Empresa (coluna)", options=[None] + list(df_emp.columns), index=0)
-            if ecol is None and default_e:
-                ecol = default_e
-
-            texts = []
-            if ccol:
-                texts += df_cand[ccol].dropna().astype(str).tolist()
-            if ecol:
-                texts += df_emp[ecol].dropna().astype(str).tolist()
-
-            if texts:
-                if st.button("IA — Análise Cruzada"):
-                    result = gemini_analyse(texts, title="Análise Cruzada")
-                    st.markdown(result)
-                    buf = generate_pdf_bytes("Análise Cruzada", result)
-                    st.download_button("📥 Baixar PDF (Cruzada)", data=buf, file_name="analise_cruzada.pdf", mime="application/pdf")
-            else:
-                st.info("Selecione colunas textuais válidas para cruzar.")
-
-    # CHAT IA
-    with tabs[3]:
-        chat_with_gemini_context = globals().get("chat_with_gemini_context")
-        if callable(chat_with_gemini_context):
-            chat_with_gemini_context(df_cand, df_emp)
-        else:
-            st.info("Chat não disponível.")
-
-    # Reset password footer
-    st.markdown("---")
-    st.header("🔐 Redefinir senha (se tiver token)")
-    token_val = st.text_input("Token de recuperação", key="reset_token_v134")
-    new_password = st.text_input("Nova senha", type="password", key="reset_new_pw_v134")
-    if st.button("Redefinir senha", key="reset_submit_v134"):
-        if not token_val:
-            st.error("Informe token.")
-        else:
-            ok, resp = validate_token(token_val)
-            if not ok:
-                st.error(resp)
-            else:
-                username = resp
-                hashed = PWD_CTX.hash(new_password)
-                st.success("Senha atualizada — cole o bloco abaixo no secrets.toml")
-                st.code(f'[users.{username}]\nname = "{USERS[username]["name"]}"\nemail = "{USERS[username]["email"]}"\npassword = "{hashed}"', language="toml")
-
-# ----------------------------
-# Execution
-# ----------------------------
-inject_css()
-init_tokens()
-
+# =====================================================
+# APP FLOW
+# =====================================================
 if "logged" not in st.session_state:
     st.session_state.logged = False
-if "page" not in st.session_state:
-    st.session_state.page = "main"
-if "show_recovery" not in st.session_state:
     st.session_state.show_recovery = False
-if "_rerun" not in st.session_state:
-    st.session_state._rerun = False
-
-if st.session_state._rerun:
-    st.session_state._rerun = False
-    st.rerun()
 
 if not st.session_state.logged:
-    if st.button("Entrar", key="open_login"):
-        login_dialog()
+    st.button("Entrar", on_click=open_login_modal)
+    st.button("Esqueci a senha", on_click=lambda: st.session_state.__setitem__("show_recovery", True))
+
     if st.session_state.show_recovery:
-        recovery_dialog()
+        open_recovery_modal()
+
 else:
     main_app()
+
+
+# =====================================================
+# RERUN HANDLER
+# =====================================================
+if st.session_state.get("_rerun"):
+    st.session_state._rerun = False
+    st.rerun()
