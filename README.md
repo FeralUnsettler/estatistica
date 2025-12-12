@@ -1,6 +1,6 @@
 
 # 🧠 REPARA Analytics — Plataforma Inteligente de Análise de Talentos  
-**Versão:** 13.3 (2025)  
+**Versão:** 13.5.1 (2025)  
 **Tecnologias:** Streamlit + Gemini AI + Python + Wordcloud + Pandas + ReportLab  
 **Ambiente:** Compatível com Streamlit Cloud
 
@@ -8,7 +8,7 @@
 
 # 🚀 O que é o REPARA Analytics?
 
-O **REPARA Analytics v13.3** é uma plataforma inteligente projetada para analisar dados de candidatos e empresas a partir de arquivos CSV e gerar **insights automáticos** com apoio de IA (Gemini 2.5 Flash).
+O **REPARA Analytics** é uma plataforma inteligente projetada para analisar dados de candidatos e empresas a partir de arquivos CSV e gerar **insights automáticos** com apoio de IA (Gemini 2.5 Flash).
 
 A aplicação foi criada para o projeto **REPARA — Revela Talentos Para Todos**, com o objetivo de dar visibilidade a grupos sub-representados, gerar análises qualitativas e cruzadas, e auxiliar empresas e instituições educacionais a identificar padrões, dores e oportunidades.
 
@@ -60,19 +60,6 @@ Para qualquer coluna textual selecionada:
 - Geração de hashes  
 - Blocos `TOML` prontos para colar no Streamlit Cloud  
 - Exclusivo para admin (ex.: `admin@repara.com`)  
-
----
----
-
-Aqui está o **README.md COMPLETO para a versão 13.4.1**, incluindo:
-
-* Wordcloud inteligente com Light/Dark Theme
-* Gemini respondendo **100% em Português do Brasil**
-* Tela de Login com UI elegante + explicação clara
-* Sistema completo de login, recuperação de senha e painel admin
-* Deploy totalmente compatível com Streamlit Cloud
-* Lista completa de requisitos
-* Documentação profissional / pronta para GitHub
 
 ---
 ---
@@ -336,15 +323,6 @@ A versão **13.5.1** entrega:
 * mais inteligência
 * mais acessibilidade
 * mais contexto social aplicado
-
-Se quiser, posso gerar também:
-
-✅ **um changelog detalhado**
-✅ **um diagrama da arquitetura**
-✅ **uma apresentação do projeto (PDF / PPTX)**
-✅ **versão 13.6 com novos ajustes**
-
-Quer que eu gere?
 
 
 ---
